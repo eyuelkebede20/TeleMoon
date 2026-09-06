@@ -328,7 +328,11 @@ export default function Drive({ user, onLogout, onStorage }) {
                   onClick={() => open(n)}
                   onKeyDown={(e) => e.key === "Enter" && open(n)}>
                   <div className="card-ico">
-                    <Icon className={n.type === "folder" ? "c-moon" : "c-mut"} />
+                    {n.type === "file" && n.mime?.startsWith("image/") && n.size < 5 * 1024 * 1024 ? (
+                      <img src={api.fileUrl(n.id)} alt={n.name} loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '4px' }} />
+                    ) : (
+                      <Icon className={n.type === "folder" ? "c-moon" : "c-mut"} />
+                    )}
                   </div>
                   <div className="card-name" title={n.name}>{n.name}</div>
                   <div className="card-meta mono dim">

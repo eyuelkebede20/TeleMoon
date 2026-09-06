@@ -27,7 +27,7 @@
 ### Core Roadmap Items
 - [ ] **Client-side encryption:** Implement AES-GCM encryption per file (chunk-aligned so HTTP Range still works) using a passphrase, before uploading.
 - [x] **Share links:** Create signed, expiring share links for non-account friends to download files.
-- [ ] **Thumbnails:** Fetch and display small document thumbnails that Telegram automatically generates.
+- [x] **Thumbnails:** Inline image previews for small images directly in the grid.
 - [ ] **Repair/Scan tool:** Create an admin tool to verify all chunk messages exist and re-index full channel history (`client.iterMessages`).
 - [x] **User Isolation:** Implement per-user root folders, storage quotas, and a trash system with delayed purge.
 - [ ] **Resumable uploads:** Upgrade to tus-style resumable uploads across page reloads (the backend parts table already supports it, needs client persistence).
