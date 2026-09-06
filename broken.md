@@ -21,12 +21,12 @@
 
 ## 3. Tasks Instructions
 ### High Priority: UI/UX Fixes
-- [ ] **Refactor native dialogues:** Replace all instances of `prompt()`, `confirm()`, and `alert()` in `web/src/Drive.jsx` with custom React modals styled according to `--panel` and `--panel-2` guidelines.
-- [ ] **Inline Error Rendering:** Catch API errors and display them within the UI context (e.g., inside the custom folder creation modal) using the `--danger` text color.
+- [x] **Refactor native dialogues:** Replace all instances of `prompt()`, `confirm()`, and `alert()` in `web/src/Drive.jsx` with custom React modals styled according to `--panel` and `--panel-2` guidelines.
+- [x] **Inline Error Rendering:** Catch API errors and display them within the UI context (e.g., inside the custom folder creation modal) using the `--danger` text color.
 
 ### Core Roadmap Items
 - [ ] **Client-side encryption:** Implement AES-GCM encryption per file (chunk-aligned so HTTP Range still works) using a passphrase, before uploading.
-- [ ] **Share links:** Create signed, expiring share links for non-account friends to download files.
+- [x] **Share links:** Create signed, expiring share links for non-account friends to download files.
 - [ ] **Thumbnails:** Fetch and display small document thumbnails that Telegram automatically generates.
 - [ ] **Repair/Scan tool:** Create an admin tool to verify all chunk messages exist and re-index full channel history (`client.iterMessages`).
 - [ ] **User Isolation:** Implement per-user root folders, storage quotas, and a trash system with delayed purge.

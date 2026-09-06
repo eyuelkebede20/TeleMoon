@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, uploadFile } from "./api.js";
 import {
   Crescent, MoonProgress, iconFor, UploadIcon, PlusIcon, SearchIcon,
-  DownloadIcon, TrashIcon, EditIcon, XIcon, LogoutIcon, ChevR,
+  DownloadIcon, TrashIcon, EditIcon, XIcon, LogoutIcon, ChevR, ShareIcon,
 } from "./icons.jsx";
 
 const fmtBytes = (n) => {
@@ -65,6 +65,36 @@ function ActionModal({ modal, onClose, onConfirm }) {
               </button>
             </div>
           </form>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ShareModal({ modal, onClose }) {
+  const [copied, setCopied] = useState(false);
+  const copy = () => {
+    navigator.clipboard.writeText(modal.url);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+  return (
+    <div className="modal" onClick={onClose}>
+      <div className="modal-card" style={{ maxWidth: 460, minHeight: 'auto' }} onClick={e => e.stopPropagation()}>
+        <header>
+          <span className="upname">Share link</span>
+          <button type="button" className="ghost" onClick={onClose}><XIcon /></button>
+        </header>
+        <div className="modal-body" style={{ minHeight: 'auto', padding: "24px 20px", display: "block" }}>
+          <p style={{ margin: "0 0 16px", fontSize: "0.95rem" }}>
+            Anyone with this link can download "{modal.node.name}".
+          </p>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input readOnly value={modal.url} 
+              style={{ flex: 1, padding: "10px 12px", borderRadius: "8px", border: "1px solid var(--line)", background: "var(--ink-2)", outline: "none", color: "var(--text)", fontFamily: "var(--mono)", fontSize: "0.85rem" }} 
+              onClick={e => e.target.select()} />
+            <button className="btn btn-moon" onClick={copy}>{copied ? "Copied!" : "Copy"}</button>
+          </div>
         </div>
       </div>
     </div>
@@ -151,6 +181,13 @@ export default function Drive({ user, onLogout, onStorage }) {
   function mkdir() { setModal({ type: "mkdir" }); }
   function rename(node) { setModal({ type: "rename", node }); }
   function remove(node) { setModal({ type: "remove", node }); }
+  async function share(node) {
+    try {
+      const { shareId } = await api.share(node.id);
+      const url = `${window.location.origin}/api/share/${shareId}/content`;
+      setModal({ type: "share", url, node });
+    } catch (e) { setModal({ type: "error", error: e.message }); }
+  }
 
   /* OS file drop vs internal row drag */
   const isOsDrag = (e) => [...(e.dataTransfer?.types || [])].includes("Files");
@@ -238,7 +275,10 @@ export default function Drive({ user, onLogout, onStorage }) {
                   </div>
                   <div className="card-acts" onClick={(e) => e.stopPropagation()}>
                     {n.type === "file" && (
-                      <a className="ghost" href={api.fileUrl(n.id, true)} title="Download"><DownloadIcon /></a>
+                      <>
+                        <button className="ghost" onClick={() => share(n)} title="Share"><ShareIcon /></button>
+                        <a className="ghost" href={api.fileUrl(n.id, true)} title="Download"><DownloadIcon /></a>
+                      </>
                     )}
                     <button className="ghost" onClick={() => rename(n)} title="Rename"><EditIcon /></button>
                     <button className="ghost danger" onClick={() => remove(n)} title="Delete"><TrashIcon /></button>
@@ -281,7 +321,9 @@ export default function Drive({ user, onLogout, onStorage }) {
         </aside>
       )}
 
-      {modal && (
+      {modal && modal.type === "share" ? (
+        <ShareModal modal={modal} onClose={() => setModal(null)} />
+      ) : modal ? (
         <ActionModal 
           modal={modal}
           onClose={() => setModal(null)}
@@ -297,7 +339,7 @@ export default function Drive({ user, onLogout, onStorage }) {
             }
           }}
         />
-      )}
+      ) : null}
 
       {preview && (
         <div className="modal" onClick={() => setPreview(null)}>

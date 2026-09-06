@@ -37,6 +37,7 @@ export const api = {
   createUpload: (b) => j("POST", "/api/uploads", b),
   completeUpload: (id) => j("POST", `/api/uploads/${id}/complete`),
   abortUpload: (id) => j("DELETE", `/api/uploads/${id}`),
+  share: (id) => j("POST", `/api/nodes/${id}/share`),
   fileUrl: (id, dl = false) =>
     `/api/files/${id}/content?t=${encodeURIComponent(token.get())}${dl ? "&dl=1" : ""}`,
 };

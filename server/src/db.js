@@ -57,6 +57,11 @@ CREATE TABLE IF NOT EXISTS upload_parts(
   size INTEGER NOT NULL,
   PRIMARY KEY(upload_id, idx)
 );
+CREATE TABLE IF NOT EXISTS shares(
+  id TEXT PRIMARY KEY,
+  file_id TEXT NOT NULL,
+  created_at INTEGER NOT NULL
+);
 `);
 
 export const now = () => Date.now();
@@ -183,4 +188,14 @@ export function createFileNode({ parentId, name, size, mime, ownerId, parts }) {
   });
   tx();
   return getNode(id);
+}
+
+export function createShare(fileId) {
+  const id = uid();
+  q(`INSERT INTO shares(id,file_id,created_at) VALUES (?,?,?)`).run(id, fileId, now());
+  return id;
+}
+
+export function getShare(shareId) {
+  return q(`SELECT * FROM shares WHERE id=?`).get(shareId);
 }

@@ -67,6 +67,9 @@ export const XIcon = (p) => (<S {...p}><path d="M6 6l12 12M18 6 6 18" /></S>);
 export const LogoutIcon = (p) => (
   <S {...p}><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="m16 17 5-5-5-5M21 12H9" /></S>
 );
+export const ShareIcon = (p) => (
+  <S {...p}><circle cx="18" cy="5" r="3" /><circle cx="6" cy="12" r="3" /><circle cx="18" cy="19" r="3" /><line x1="8.59" y1="13.51" x2="15.42" y2="17.49" /><line x1="15.41" y1="6.51" x2="8.59" y2="10.49" /></S>
+);
 export const ChevR = (p) => (<S width="14" height="14" {...p}><path d="m9 6 6 6-6 6" /></S>);
 export const LinkIcon = (p) => (
   <S {...p}><path d="M10 14a4 4 0 0 0 6 .4l3-3a4 4 0 0 0-5.6-5.6l-1.7 1.7" /><path d="M14 10a4 4 0 0 0-6-.4l-3 3a4 4 0 0 0 5.6 5.6l1.7-1.7" /></S>

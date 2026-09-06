@@ -8,7 +8,7 @@ import bcrypt from "bcryptjs";
 import { cfg } from "./config.js";
 import {
   db, q, now, uid, getNode, breadcrumb, children, subtreeIds,
-  isAncestor, uniqueName, createFileNode,
+  isAncestor, uniqueName, createFileNode, createShare, getShare,
 } from "./db.js";
 import { sign, auth } from "./auth.js";
 import {
@@ -149,6 +149,13 @@ api.get("/search", auth, (req, res) => {
   res.json({ results });
 });
 
+api.post("/nodes/:id/share", auth, (req, res) => {
+  const node = getNode(req.params.id);
+  if (!node || node.type !== "file") return bad(res, 404, "file not found");
+  const shareId = createShare(node.id);
+  res.json({ shareId });
+});
+
 /* -------------------------------------------------------- chunked uploads */
 // Browser slices the File into <= chunkBytes parts. Each part is PUT as a
 // raw body -> temp file on disk -> one Telegram message. `complete` stitches
@@ -240,8 +247,7 @@ api.delete("/uploads/:id", auth, (req, res) => {
 /* ------------------------------------------------------- ranged downloads */
 // Full HTTP Range support across chunk boundaries -> video seeking works.
 
-api.get("/files/:id/content", auth, async (req, res) => {
-  const node = getNode(req.params.id);
+async function serveNodeContent(req, res, node) {
   if (!node || node.type !== "file") return bad(res, 404, "file not found");
   const chunks = q(`SELECT * FROM chunks WHERE file_id=? ORDER BY idx`).all(node.id);
   const total = node.size;
@@ -296,4 +302,15 @@ api.get("/files/:id/content", auth, async (req, res) => {
     console.error("[download]", e.message);
   }
   res.end();
+}
+
+api.get("/files/:id/content", auth, async (req, res) => {
+  serveNodeContent(req, res, getNode(req.params.id));
 });
+
+api.get("/share/:id/content", async (req, res) => {
+  const share = getShare(req.params.id);
+  if (!share) return bad(res, 404, "share link not found");
+  serveNodeContent(req, res, getNode(share.file_id));
+});
+
