@@ -240,7 +240,7 @@ export default function Drive({ user, onLogout, onStorage }) {
   }
 
   /* OS file drop vs internal row drag */
-  const isOsDrag = (e) => [...(e.dataTransfer?.types || [])].includes("Files");
+  const isOsDrag = (e) => [...(e.dataTransfer?.types || [])].some(t => t.toLowerCase() === "files");
   async function onDrop(e) {
     e.preventDefault(); setDragOver(false);
     if (!isOsDrag(e)) return;
