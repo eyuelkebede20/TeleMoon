@@ -113,6 +113,7 @@ export default function Drive({ user, onLogout, onStorage }) {
   const [status, setStatus] = useState(null);
   const [dragOver, setDragOver] = useState(false);
   const fileInput = useRef(null);
+  const folderInput = useRef(null);
   const queue = useRef(Promise.resolve());
   const cwd = stack[stack.length - 1];
 
@@ -145,6 +146,8 @@ export default function Drive({ user, onLogout, onStorage }) {
     } else setPreview(node);
   }
 
+  const folderCache = useRef({});
+
   function enqueue(files) {
     const parentId = cwd.id;
     for (const file of files) {
@@ -155,7 +158,27 @@ export default function Drive({ user, onLogout, onStorage }) {
         if (handle.cancelled) return;
         setUploads((u) => u.map((x) => (x.key === key ? { ...x, status: "up" } : x)));
         try {
-          await uploadFile(file, parentId, ({ loaded, total, part, parts }) => {
+          let targetFolderId = parentId;
+          const relativePath = file.customPath || file.webkitRelativePath;
+          if (relativePath) {
+            const parts = relativePath.split('/').filter(Boolean);
+            parts.pop(); // remove the filename itself
+            let currentId = parentId;
+            for (const part of parts) {
+              const cacheKey = `${currentId}/${part}`;
+              if (folderCache.current[cacheKey]) {
+                currentId = folderCache.current[cacheKey];
+              } else {
+                const res = await api.children(currentId);
+                let found = res.children.find(c => c.type === 'folder' && c.name === part);
+                if (!found) found = await api.mkdir(currentId, part);
+                folderCache.current[cacheKey] = found.id;
+                currentId = found.id;
+              }
+            }
+            targetFolderId = currentId;
+          }
+          await uploadFile(file, targetFolderId, ({ loaded, total, part, parts }) => {
             setUploads((u) => u.map((x) => x.key === key
               ? { ...x, pct: total ? (100 * loaded) / total : 100, part, parts } : x));
           }, handle);
@@ -191,9 +214,42 @@ export default function Drive({ user, onLogout, onStorage }) {
 
   /* OS file drop vs internal row drag */
   const isOsDrag = (e) => [...(e.dataTransfer?.types || [])].includes("Files");
-  function onDrop(e) {
+  async function onDrop(e) {
     e.preventDefault(); setDragOver(false);
-    if (isOsDrag(e) && e.dataTransfer.files.length) enqueue([...e.dataTransfer.files]);
+    if (!isOsDrag(e)) return;
+    
+    // Fallback if items not supported
+    if (!e.dataTransfer.items) return enqueue([...e.dataTransfer.files]);
+    
+    const items = [...e.dataTransfer.items].filter(i => i.kind === "file");
+    const filesToUpload = [];
+
+    const readEntry = (entry, path = "") => new Promise((resolve) => {
+      if (entry.isFile) {
+        entry.file(f => {
+          // Manually inject a webkitRelativePath-like property for enqueue
+          Object.defineProperty(f, 'customPath', { value: path + f.name });
+          filesToUpload.push(f);
+          resolve();
+        });
+      } else if (entry.isDirectory) {
+        const reader = entry.createReader();
+        reader.readEntries(async (entries) => {
+          for (const e of entries) await readEntry(e, path + entry.name + "/");
+          resolve();
+        });
+      } else {
+        resolve();
+      }
+    });
+
+    for (const item of items) {
+      const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
+      if (entry) await readEntry(entry);
+      else filesToUpload.push(item.getAsFile()); // Safari fallback
+    }
+    
+    enqueue(filesToUpload);
   }
   async function dropOnFolder(e, folder) {
     e.preventDefault(); e.stopPropagation();
@@ -221,8 +277,13 @@ export default function Drive({ user, onLogout, onStorage }) {
         </div>
         <div className="top-actions">
           <button className="btn" onClick={mkdir}><PlusIcon /> New folder</button>
+          <button className="btn" onClick={() => folderInput.current.click()}>
+            <UploadIcon /> Folder
+          </button>
+          <input ref={folderInput} type="file" multiple webkitdirectory="true" hidden
+            onChange={(e) => { enqueue([...e.target.files]); e.target.value = ""; }} />
           <button className="btn btn-moon" onClick={() => fileInput.current.click()}>
-            <UploadIcon /> Upload
+            <UploadIcon /> File
           </button>
           <input ref={fileInput} type="file" multiple hidden
             onChange={(e) => { enqueue([...e.target.files]); e.target.value = ""; }} />
