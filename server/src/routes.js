@@ -83,7 +83,7 @@ api.post("/tg/connect", auth, async (req, res) => {
 api.get("/nodes/:id/children", auth, (req, res) => {
   const folder = getNode(req.params.id);
   if (!folder || folder.type !== "folder") return bad(res, 404, "folder not found");
-  res.json({ folder, breadcrumb: breadcrumb(folder.id), children: children(folder.id) });
+  res.json({ folder, breadcrumb: breadcrumb(folder.id), children: children(folder.id, req.user.id) });
 });
 
 api.post("/folders", auth, (req, res) => {
@@ -95,7 +95,7 @@ api.post("/folders", auth, (req, res) => {
   const id = uid();
   q(`INSERT INTO nodes(id,parent_id,name,type,size,owner_id,created_at,updated_at)
      VALUES (?,?,?,?,0,?,?,?)`)
-    .run(id, parentId, uniqueName(parentId, clean), "folder", req.user.id, now(), now());
+    .run(id, parentId, uniqueName(parentId, clean, req.user.id), "folder", req.user.id, now(), now());
   res.json(getNode(id));
 });
 
@@ -110,14 +110,14 @@ api.patch("/nodes/:id", auth, (req, res) => {
     if (node.type === "folder" && isAncestor(node.id, target.id))
       return bad(res, 400, "cannot move a folder into itself");
     q(`UPDATE nodes SET parent_id=?, name=?, updated_at=? WHERE id=?`)
-      .run(target.id, uniqueName(target.id, node.name), now(), node.id);
+      .run(target.id, uniqueName(target.id, node.name, req.user.id), now(), node.id);
   }
   if (name !== undefined) {
     const clean = String(name).trim().replace(/[/\\]/g, "-");
     if (!clean) return bad(res, 400, "name required");
     const fresh = getNode(node.id);
     q(`UPDATE nodes SET name=?, updated_at=? WHERE id=?`)
-      .run(uniqueName(fresh.parent_id, clean), now(), node.id);
+      .run(uniqueName(fresh.parent_id, clean, req.user.id), now(), node.id);
   }
   res.json(getNode(node.id));
 });
@@ -143,9 +143,9 @@ api.get("/search", auth, (req, res) => {
   if (!term) return res.json({ results: [] });
   const results = q(
     `SELECT id,parent_id,name,type,size,mime,updated_at FROM nodes
-     WHERE name LIKE ? AND id != 'root'
+     WHERE name LIKE ? AND id != 'root' AND (owner_id=? OR owner_id IS NULL)
      ORDER BY type='folder' DESC, name COLLATE NOCASE LIMIT 100`
-  ).all(`%${term}%`);
+  ).all(`%${term}%`, req.user.id);
   res.json({ results });
 });
 

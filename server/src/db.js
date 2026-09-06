@@ -107,9 +107,9 @@ q(`INSERT OR IGNORE INTO nodes(id,parent_id,name,type,size,created_at,updated_at
    VALUES ('root', NULL, 'Home', 'folder', 0, ?, ?)`).run(now(), now());
 
 /** Sibling-unique name: "report.pdf" -> "report (2).pdf" on collision. */
-export function uniqueName(parentId, name) {
+export function uniqueName(parentId, name, ownerId) {
   const exists = (n) =>
-    q(`SELECT 1 FROM nodes WHERE parent_id=? AND name=?`).get(parentId, n);
+    q(`SELECT 1 FROM nodes WHERE parent_id=? AND name=? AND (owner_id=? OR owner_id IS NULL)`).get(parentId, n, ownerId);
   if (!exists(name)) return name;
   const dot = name.lastIndexOf(".");
   const [base, ext] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ""];
@@ -132,12 +132,12 @@ export function breadcrumb(id) {
   return trail;
 }
 
-export function children(parentId) {
+export function children(parentId, ownerId) {
   return q(
     `SELECT id,parent_id,name,type,size,mime,created_at,updated_at
-     FROM nodes WHERE parent_id=?
+     FROM nodes WHERE parent_id=? AND (owner_id=? OR owner_id IS NULL)
      ORDER BY type='folder' DESC, name COLLATE NOCASE`
-  ).all(parentId);
+  ).all(parentId, ownerId);
 }
 
 /** All node ids in a subtree (inclusive). */
@@ -181,7 +181,7 @@ export function createFileNode({ parentId, name, size, mime, ownerId, parts }) {
   const tx = db.transaction(() => {
     q(`INSERT INTO nodes(id,parent_id,name,type,size,mime,owner_id,created_at,updated_at)
        VALUES (?,?,?,?,?,?,?,?,?)`).run(
-      id, parentId, uniqueName(parentId, name), "file", size, mime || null, ownerId || null, t, t
+      id, parentId, uniqueName(parentId, name, ownerId), "file", size, mime || null, ownerId || null, t, t
     );
     const ins = q(`INSERT INTO chunks(file_id,idx,msg_id,size) VALUES (?,?,?,?)`);
     parts.forEach((p, i) => ins.run(id, i, p.msg_id, p.size));
