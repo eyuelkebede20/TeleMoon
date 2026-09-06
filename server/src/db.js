@@ -15,6 +15,7 @@ CREATE TABLE IF NOT EXISTS users(
   id TEXT PRIMARY KEY,
   handle TEXT UNIQUE NOT NULL,
   pass_hash TEXT NOT NULL,
+  channel_id TEXT,
   created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS settings(

@@ -174,9 +174,9 @@ function assertReady() {
 }
 
 /** Upload a file from disk into the channel. Returns the message id. */
-export async function sendDocument(filePath, fileName, caption) {
+export async function sendDocument(filePath, fileName, caption, peer = tg.channel) {
   assertReady();
-  const msg = await tg.client.sendFile(tg.channel, {
+  const msg = await tg.client.sendFile(peer, {
     file: filePath,
     caption,
     forceDocument: true,
@@ -185,18 +185,18 @@ export async function sendDocument(filePath, fileName, caption) {
   return msg.id;
 }
 
-export async function getMessage(msgId) {
+export async function getMessage(msgId, peer = tg.channel) {
   assertReady();
-  const [m] = await tg.client.getMessages(tg.channel, { ids: [msgId] });
+  const [m] = await tg.client.getMessages(peer, { ids: [msgId] });
   if (!m || !m.media) throw err(`message ${msgId} missing in channel (deleted?)`, 502);
   return m;
 }
 
-export async function deleteMessages(ids) {
+export async function deleteMessages(ids, peer = tg.channel) {
   if (!tg.ready || !ids.length) return;
   for (let i = 0; i < ids.length; i += 100) {
     try {
-      await tg.client.deleteMessages(tg.channel, ids.slice(i, i + 100), {
+      await tg.client.deleteMessages(peer, ids.slice(i, i + 100), {
         revoke: true,
       });
     } catch (e) {
@@ -211,8 +211,8 @@ export async function deleteMessages(ids) {
  * over-fetch to the previous 4 KB boundary and trim.
  * `write(buf) -> Promise<boolean>` returns false to abort (client gone).
  */
-export async function streamRange(msgId, from, to, write) {
-  const m = await getMessage(msgId);
+export async function streamRange(msgId, from, to, write, peer = tg.channel) {
+  const m = await getMessage(msgId, peer);
   const aligned = from - (from % 4096);
   let skip = from - aligned;
   let remaining = to - from + 1;

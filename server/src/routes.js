@@ -21,6 +21,13 @@ import {
 export const api = Router();
 const bad = (res, code, error) => res.status(code).json({ error });
 
+function getUserPeer(userId) {
+  const u = q(`SELECT channel_id FROM users WHERE id=?`).get(userId);
+  if (!u || !u.channel_id) throw new Error("No Telegram channel connected");
+  let cid = String(u.channel_id).replace(/^-100/, "");
+  return `-100${cid}`;
+}
+
 /* ---------------------------------------------------------------- status */
 
 api.get("/status", (_req, res) => {
@@ -40,7 +47,7 @@ api.get("/status", (_req, res) => {
 // on the spot (invite-gated for everyone after the first user, if set).
 
 api.post("/auth/enter", async (req, res) => {
-  const { password, invite } = req.body || {};
+  const { password } = req.body || {};
   const handle = String(req.body?.handle || "").trim().replace(/^@/, "").toLowerCase();
   if (!/^[a-z0-9_]{3,32}$/.test(handle))
     return bad(res, 400, "handle: 3–32 letters, digits or _");
@@ -51,12 +58,9 @@ api.post("/auth/enter", async (req, res) => {
   if (user) {
     if (!(await bcrypt.compare(password, user.pass_hash)))
       return bad(res, 401, `wrong password for @${handle}`);
-    return res.json({ token: sign(user), user: { id: user.id, handle } });
+    return res.json({ token: sign(user), user: { id: user.id, handle, channel_id: user.channel_id } });
   }
 
-  const count = q(`SELECT COUNT(*) c FROM users`).get().c;
-  if (count > 0 && cfg.inviteCode && invite !== cfg.inviteCode)
-    return bad(res, 403, `@${handle} is new here — invite code required`);
   const u = { id: uid(), handle, pass_hash: await bcrypt.hash(password, 10), created_at: now() };
   q(`INSERT INTO users(id,handle,pass_hash,created_at) VALUES (?,?,?,?)`)
     .run(u.id, u.handle, u.pass_hash, u.created_at);
@@ -71,6 +75,13 @@ api.get("/tg/dialogs", auth, async (_req, res) => {
   } catch (e) {
     bad(res, e.status || 500, e.errorMessage || e.message);
   }
+});
+
+api.post("/user/channel", auth, async (req, res) => {
+  const { channel_id } = req.body;
+  if (!channel_id) return bad(res, 400, "channel_id required");
+  q(`UPDATE users SET channel_id=? WHERE id=?`).run(channel_id, req.user.id);
+  res.json({ ok: true });
 });
 
 api.post("/tg/connect", auth, async (req, res) => {
@@ -192,17 +203,20 @@ api.put("/uploads/:id/parts/:idx", auth, async (req, res) => {
     await pipeline(req, fs.createWriteStream(tmp));
     if (received === 0) return bad(res, 400, "empty part");
 
+    let peer;
+    try { peer = getUserPeer(up.user_id); } catch(e) {}
+    
     const partName =
       totalParts > 1
         ? `${up.name}.part${String(idx + 1).padStart(3, "0")}`
         : up.name;
     const caption = `tm1;f=${up.name.slice(0, 200)};p=${idx + 1}/${totalParts}`;
-    const msgId = await sendDocument(tmp, partName, caption);
+    const msgId = await sendDocument(tmp, partName, caption, peer);
 
     // Retried part? Drop the superseded Telegram message.
     const prev = q(`SELECT msg_id FROM upload_parts WHERE upload_id=? AND idx=?`)
       .get(up.id, idx);
-    if (prev) deleteMessages([prev.msg_id]);
+    if (prev) deleteMessages([prev.msg_id], peer);
     q(`INSERT OR REPLACE INTO upload_parts(upload_id,idx,msg_id,size) VALUES (?,?,?,?)`)
       .run(up.id, idx, msgId, received);
     res.json({ msgId, size: received });
@@ -243,7 +257,9 @@ api.delete("/uploads/:id", auth, (req, res) => {
     q(`DELETE FROM upload_parts WHERE upload_id=?`).run(up.id);
     q(`DELETE FROM uploads WHERE id=?`).run(up.id);
   })();
-  deleteMessages(msgIds);
+  let peer;
+  try { peer = getUserPeer(up.user_id); } catch(e) {}
+  deleteMessages(msgIds, peer);
   res.json({ ok: true });
 });
 
@@ -289,6 +305,10 @@ async function serveNodeContent(req, res, node) {
       pos += c.size;
       if (cEnd < start) continue;
       if (cStart > end) break;
+      let peer;
+      if (node.owner_id) {
+        try { peer = getUserPeer(node.owner_id); } catch (e) {}
+      }
       await streamRange(
         c.msg_id,
         Math.max(start - cStart, 0),
@@ -297,7 +317,8 @@ async function serveNodeContent(req, res, node) {
           if (closed) return false;
           if (!res.write(buf)) await once(res, "drain");
           return !closed;
-        }
+        },
+        peer
       );
       if (closed) break;
     }

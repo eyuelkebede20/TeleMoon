@@ -21,7 +21,15 @@ export default function Connect({ status, canSkip, onDone, onLogout }) {
 
   async function connect(ref) {
     setBusy(true); setErr("");
-    try { await api.connect(ref); onDone(); }
+    try {
+      await api.saveChannel(ref);
+      
+      // Update local storage so the UI knows they have a channel
+      const u = savedUser.get();
+      if (u) savedUser.set({ ...u, channel_id: ref });
+      
+      onDone();
+    }
     catch (e) { setErr(e.message); }
     finally { setBusy(false); }
   }

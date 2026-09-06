@@ -24,12 +24,17 @@ export default function App() {
   if (!user) return <Auth onAuth={setUser} />;
   if (!status) return <div className="boot"><Crescent /></div>;
 
-  if (status.telegram !== "connected" || managing)
+  if (status.telegram !== "connected" || !user.channel_id || managing)
     return (
       <Connect
         status={status}
-        canSkip={status.telegram === "connected"}
-        onDone={() => { setManaging(false); refreshStatus(); }}
+        canSkip={!!user.channel_id && status.telegram === "connected"}
+        onDone={() => {
+          setManaging(false);
+          const u = savedUser.get();
+          if (u) setUser(u);
+          refreshStatus();
+        }}
         onLogout={logout}
       />
     );

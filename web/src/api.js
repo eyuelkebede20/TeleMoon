@@ -28,6 +28,7 @@ export const api = {
   enter: (b) => j("POST", "/api/auth/enter", b),
   dialogs: () => j("GET", "/api/tg/dialogs"),
   connect: (link) => j("POST", "/api/tg/connect", { link }),
+  saveChannel: (channel_id) => j("POST", "/api/user/channel", { channel_id }),
   children: (id) => j("GET", `/api/nodes/${id}/children`),
   mkdir: (parentId, name) => j("POST", "/api/folders", { parentId, name }),
   rename: (id, name) => j("PATCH", `/api/nodes/${id}`, { name }),
