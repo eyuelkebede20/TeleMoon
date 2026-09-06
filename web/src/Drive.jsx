@@ -227,17 +227,20 @@ export default function Drive({ user, onLogout, onStorage }) {
     const readEntry = (entry, path = "") => new Promise((resolve) => {
       if (entry.isFile) {
         entry.file(f => {
-          // Manually inject a webkitRelativePath-like property for enqueue
           Object.defineProperty(f, 'customPath', { value: path + f.name });
           filesToUpload.push(f);
           resolve();
         });
       } else if (entry.isDirectory) {
         const reader = entry.createReader();
-        reader.readEntries(async (entries) => {
-          for (const e of entries) await readEntry(e, path + entry.name + "/");
-          resolve();
-        });
+        const readAll = () => {
+          reader.readEntries(async (entries) => {
+            if (entries.length === 0) return resolve();
+            for (const e of entries) await readEntry(e, path + entry.name + "/");
+            readAll(); // Continue reading batches
+          });
+        };
+        readAll();
       } else {
         resolve();
       }
