@@ -4,8 +4,10 @@ import fsp from "node:fs/promises";
 import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { once } from "node:events";
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+const archiver = require("archiver");
 import bcrypt from "bcryptjs";
-import archiver from "archiver";
 import { cfg } from "./config.js";
 import {
   db, q, now, uid, getNode, breadcrumb, children, subtreeIds,
