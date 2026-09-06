@@ -154,7 +154,8 @@ export default function Drive({ user, onLogout, onStorage }) {
     // Process empty folders first
     if (emptyFolders.length > 0) {
       queue.current = queue.current.then(async () => {
-        for (const relativePath of emptyFolders) {
+        for (let relativePath of emptyFolders) {
+          relativePath = relativePath.replace(/\\/g, '/');
           const parts = relativePath.split('/').filter(Boolean);
           let currentId = parentId;
           for (const part of parts) {
@@ -184,8 +185,9 @@ export default function Drive({ user, onLogout, onStorage }) {
         setUploads((u) => u.map((x) => (x.key === key ? { ...x, status: "up" } : x)));
         try {
           let targetFolderId = parentId;
-          const relativePath = item.path || file.webkitRelativePath;
+          let relativePath = item.path || file.webkitRelativePath;
           if (relativePath) {
+            relativePath = relativePath.replace(/\\/g, '/');
             const parts = relativePath.split('/').filter(Boolean);
             parts.pop(); // remove the filename itself
             let currentId = parentId;
