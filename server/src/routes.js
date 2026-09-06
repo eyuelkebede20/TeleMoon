@@ -326,7 +326,7 @@ api.get("/folders/:id/download", auth, async (req, res) => {
     "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(rootFolder.name)}.zip`,
   });
 
-  const archive = archiver('zip', { zlib: { level: 1 } });
+  const archive = new archiver.ZipArchive({ zlib: { level: 1 } });
   archive.on('error', (err) => console.error("[zip error]", err));
   archive.pipe(res);
 
