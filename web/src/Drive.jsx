@@ -148,9 +148,10 @@ export default function Drive({ user, onLogout, onStorage }) {
 
   const folderCache = useRef({});
 
-  function enqueue(files) {
+  function enqueue(items) {
     const parentId = cwd.id;
-    for (const file of files) {
+    for (const item of items) {
+      const file = item.file || item;
       const key = `${Date.now()}_${file.name}_${Math.random()}`;
       const handle = {};
       setUploads((u) => [...u, { key, name: file.name, pct: 0, part: 0, parts: 1, status: "queued", handle }]);
@@ -159,7 +160,7 @@ export default function Drive({ user, onLogout, onStorage }) {
         setUploads((u) => u.map((x) => (x.key === key ? { ...x, status: "up" } : x)));
         try {
           let targetFolderId = parentId;
-          const relativePath = file.customPath || file.webkitRelativePath;
+          const relativePath = item.path || file.webkitRelativePath;
           if (relativePath) {
             const parts = relativePath.split('/').filter(Boolean);
             parts.pop(); // remove the filename itself
@@ -227,8 +228,7 @@ export default function Drive({ user, onLogout, onStorage }) {
     const readEntry = (entry, path = "") => new Promise((resolve) => {
       if (entry.isFile) {
         entry.file(f => {
-          Object.defineProperty(f, 'customPath', { value: path + f.name });
-          filesToUpload.push(f);
+          filesToUpload.push({ file: f, path: path + f.name });
           resolve();
         });
       } else if (entry.isDirectory) {
@@ -237,7 +237,7 @@ export default function Drive({ user, onLogout, onStorage }) {
           reader.readEntries(async (entries) => {
             if (entries.length === 0) return resolve();
             for (const e of entries) await readEntry(e, path + entry.name + "/");
-            readAll(); // Continue reading batches
+            readAll();
           });
         };
         readAll();
@@ -249,7 +249,7 @@ export default function Drive({ user, onLogout, onStorage }) {
     for (const item of items) {
       const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
       if (entry) await readEntry(entry);
-      else filesToUpload.push(item.getAsFile()); // Safari fallback
+      else filesToUpload.push({ file: item.getAsFile(), path: "" }); // Safari fallback
     }
     
     enqueue(filesToUpload);
@@ -343,11 +343,9 @@ export default function Drive({ user, onLogout, onStorage }) {
                   </div>
                   <div className="card-acts" onClick={(e) => e.stopPropagation()}>
                     {n.type === "file" && (
-                      <>
-                        <button className="ghost" onClick={() => share(n)} title="Share"><ShareIcon /></button>
-                        <a className="ghost" href={api.fileUrl(n.id, true)} title="Download"><DownloadIcon /></a>
-                      </>
+                      <button className="ghost" onClick={() => share(n)} title="Share"><ShareIcon /></button>
                     )}
+                    <a className="ghost" href={n.type === "folder" ? api.folderZipUrl(n.id) : api.fileUrl(n.id, true)} title="Download"><DownloadIcon /></a>
                     <button className="ghost" onClick={() => rename(n)} title="Rename"><EditIcon /></button>
                     <button className="ghost danger" onClick={() => remove(n)} title="Delete"><TrashIcon /></button>
                   </div>

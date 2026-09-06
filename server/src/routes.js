@@ -5,6 +5,7 @@ import path from "node:path";
 import { pipeline } from "node:stream/promises";
 import { once } from "node:events";
 import bcrypt from "bcryptjs";
+import archiver from "archiver";
 import { cfg } from "./config.js";
 import {
   db, q, now, uid, getNode, breadcrumb, children, subtreeIds,
@@ -312,5 +313,63 @@ api.get("/share/:id/content", async (req, res) => {
   const share = getShare(req.params.id);
   if (!share) return bad(res, 404, "share link not found");
   serveNodeContent(req, res, getNode(share.file_id));
+});
+
+api.get("/folders/:id/download", auth, async (req, res) => {
+  const rootFolder = getNode(req.params.id);
+  if (!rootFolder || rootFolder.type !== "folder") return bad(res, 404, "folder not found");
+  
+  res.status(200).set({
+    "Content-Type": "application/zip",
+    "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(rootFolder.name)}.zip`,
+  });
+
+  const archive = archiver('zip', { store: true });
+  archive.on('error', (err) => console.error("[zip error]", err));
+  archive.pipe(res);
+
+  let closed = false;
+  res.on("close", () => (closed = true));
+
+  async function addFolder(folderId, basePath) {
+    if (closed) return;
+    const folderChildren = children(folderId, req.user.id);
+    for (const child of folderChildren) {
+      if (closed) return;
+      const childPath = basePath ? `${basePath}/${child.name}` : child.name;
+      
+      if (child.type === "folder") {
+        archive.append("", { name: childPath + "/" });
+        await addFolder(child.id, childPath);
+      } else {
+        const fileChunks = q(`SELECT * FROM chunks WHERE file_id=? ORDER BY idx`).all(child.id);
+        const { PassThrough } = await import("node:stream");
+        const pt = new PassThrough();
+        
+        archive.append(pt, { name: childPath });
+        
+        try {
+          for (const c of fileChunks) {
+            if (closed) break;
+            if (c.size > 0) {
+              await streamRange(c.msg_id, 0, c.size - 1, async (buf) => {
+                if (!pt.write(buf)) await once(pt, "drain");
+                return !closed;
+              });
+            }
+          }
+        } catch (e) {
+          console.error("[zip stream]", e.message);
+        }
+        pt.end();
+      }
+    }
+  }
+
+  try {
+    await addFolder(rootFolder.id, "");
+  } finally {
+    archive.finalize();
+  }
 });
 

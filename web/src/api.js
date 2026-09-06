@@ -40,6 +40,7 @@ export const api = {
   share: (id) => j("POST", `/api/nodes/${id}/share`),
   fileUrl: (id, dl = false) =>
     `/api/files/${id}/content?t=${encodeURIComponent(token.get())}${dl ? "&dl=1" : ""}`,
+  folderZipUrl: (id) => `/api/folders/${id}/download?t=${encodeURIComponent(token.get())}`,
 };
 
 function putPart(uploadId, idx, blob, onProgress, handle) {

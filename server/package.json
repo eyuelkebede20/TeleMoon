@@ -9,6 +9,7 @@
     "login": "node scripts/login.js"
   },
   "dependencies": {
+    "archiver": "^8.0.0",
     "bcryptjs": "^2.4.3",
     "better-sqlite3": "^11.3.0",
     "big-integer": "^1.6.52",
