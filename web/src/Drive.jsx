@@ -148,8 +148,32 @@ export default function Drive({ user, onLogout, onStorage }) {
 
   const folderCache = useRef({});
 
-  function enqueue(items) {
+  function enqueue(items, emptyFolders = []) {
     const parentId = cwd.id;
+    
+    // Process empty folders first
+    if (emptyFolders.length > 0) {
+      queue.current = queue.current.then(async () => {
+        for (const relativePath of emptyFolders) {
+          const parts = relativePath.split('/').filter(Boolean);
+          let currentId = parentId;
+          for (const part of parts) {
+            const cacheKey = `${currentId}/${part}`;
+            if (folderCache.current[cacheKey]) {
+              currentId = folderCache.current[cacheKey];
+            } else {
+              const res = await api.children(currentId);
+              let found = res.children.find(c => c.type === 'folder' && c.name === part);
+              if (!found) found = await api.mkdir(currentId, part);
+              folderCache.current[cacheKey] = found.id;
+              currentId = found.id;
+            }
+          }
+        }
+        refresh();
+      });
+    }
+
     for (const item of items) {
       const file = item.file || item;
       const key = `${Date.now()}_${file.name}_${Math.random()}`;
@@ -224,35 +248,39 @@ export default function Drive({ user, onLogout, onStorage }) {
     
     const items = [...e.dataTransfer.items].filter(i => i.kind === "file");
     const filesToUpload = [];
+    const emptyFolders = [];
 
-    const readEntry = (entry, path = "") => new Promise((resolve) => {
+    const readEntry = async (entry, path = "") => {
       if (entry.isFile) {
-        entry.file(f => {
-          filesToUpload.push({ file: f, path: path + f.name });
-          resolve();
-        });
+        const file = await new Promise((res, rej) => entry.file(res, rej));
+        filesToUpload.push({ file, path: path + file.name });
       } else if (entry.isDirectory) {
         const reader = entry.createReader();
-        const readAll = () => {
-          reader.readEntries(async (entries) => {
-            if (entries.length === 0) return resolve();
-            for (const e of entries) await readEntry(e, path + entry.name + "/");
-            readAll();
-          });
-        };
-        readAll();
-      } else {
-        resolve();
+        let entries = [];
+        let hasMore = true;
+        while (hasMore) {
+          const batch = await new Promise((res, rej) => reader.readEntries(res, rej));
+          if (batch.length === 0) hasMore = false;
+          else entries.push(...batch);
+        }
+        if (entries.length === 0) {
+          emptyFolders.push(path + entry.name);
+        } else {
+          for (const e of entries) await readEntry(e, path + entry.name + "/");
+        }
       }
-    });
+    };
 
-    for (const item of items) {
-      const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
-      if (entry) await readEntry(entry);
-      else filesToUpload.push({ file: item.getAsFile(), path: "" }); // Safari fallback
+    try {
+      for (const item of items) {
+        const entry = item.webkitGetAsEntry ? item.webkitGetAsEntry() : null;
+        if (entry) await readEntry(entry);
+        else filesToUpload.push({ file: item.getAsFile(), path: "" });
+      }
+      enqueue(filesToUpload, emptyFolders);
+    } catch (err) {
+      alert("Error reading dropped folder: " + err.message);
     }
-    
-    enqueue(filesToUpload);
   }
   async function dropOnFolder(e, folder) {
     e.preventDefault(); e.stopPropagation();
