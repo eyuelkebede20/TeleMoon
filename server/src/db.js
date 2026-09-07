@@ -67,6 +67,13 @@ CREATE TABLE IF NOT EXISTS shares(
 
 export const now = () => Date.now();
 export const uid = () => nanoid(12);
+// Migrate existing databases for SaaS pivot
+try {
+  db.exec(`ALTER TABLE users ADD COLUMN channel_id TEXT`);
+} catch (e) {
+  // Ignore error if column already exists
+}
+
 export const q = (sql) => db.prepare(sql);
 
 // Migration: pre-handle DBs stored email+name; handle = sanitized email
