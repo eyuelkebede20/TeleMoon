@@ -8,6 +8,7 @@ import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const archiver = require("archiver");
 import bcrypt from "bcryptjs";
+import bigInt from "big-integer";
 import { cfg } from "./config.js";
 import {
   db, q, now, uid, getNode, breadcrumb, children, subtreeIds,
@@ -24,8 +25,9 @@ const bad = (res, code, error) => res.status(code).json({ error });
 function getUserPeer(userId) {
   const u = q(`SELECT channel_id FROM users WHERE id=?`).get(userId);
   if (!u || !u.channel_id) throw new Error("No Telegram channel connected");
-  let cid = String(u.channel_id).replace(/^-100/, "");
-  return `-100${cid}`;
+  let cid = String(u.channel_id).trim();
+  if (/^-?\d+$/.test(cid)) return bigInt(cid);
+  return cid;
 }
 
 /* ---------------------------------------------------------------- status */
@@ -78,8 +80,17 @@ api.get("/tg/dialogs", auth, async (_req, res) => {
 });
 
 api.post("/user/channel", auth, async (req, res) => {
-  const { channel_id } = req.body;
+  let { channel_id } = req.body;
   if (!channel_id) return bad(res, 400, "channel_id required");
+  channel_id = String(channel_id).trim();
+  
+  if (channel_id.includes("t.me") || channel_id.includes("telegram.me")) {
+    return bad(res, 400, "Please paste the channel ID (e.g. -100...) or @username, not an invite link.");
+  }
+  
+  // Auto-prefix -100 for raw IDs
+  if (/^\d{10,}$/.test(channel_id)) channel_id = `-100${channel_id}`;
+  
   q(`UPDATE users SET channel_id=? WHERE id=?`).run(channel_id, req.user.id);
   res.json({ ok: true });
 });
