@@ -1,0 +1,236 @@
+// MTProto layer via GramJS. We deliberately avoid the Bot HTTP API
+// (20 MB download / 50 MB upload caps). Over MTProto a bot can move
+// up to 2 GB per message; a premium *user* session raises that to 4 GB.
+import telegram from "telegram";
+import sessionsMod from "telegram/sessions/index.js";
+import eventsMod from "telegram/events/index.js";
+import bigInt from "big-integer";
+import { cfg } from "./config.js";
+import {
+  q, now, ensureInboxFolder, createFileNode, getStorage, getStorageByChannel,
+  activateStorage,
+} from "./db.js";
+import { hashPairingCode, normalizePairingCode } from "./pairing.js";
+
+const { TelegramClient, Api } = telegram;
+const { StringSession } = sessionsMod;
+const { NewMessage } = eventsMod;
+
+export const tg = {
+  client: null,
+  ready: false, // Telegram client authenticated; users pair channels separately
+  mode: null, // "bot" | "user"
+  error: null,
+  channels: new Map(), // storage id -> resolved Telegram entity
+};
+
+const err = (msg, status = 400) => Object.assign(new Error(msg), { status });
+
+export async function initTelegram() {
+  if (!cfg.apiId || !cfg.apiHash || (!cfg.botToken && !cfg.session)) {
+    tg.error = "Telegram not configured (TG_API_ID / TG_API_HASH / TG_BOT_TOKEN or TG_SESSION)";
+    console.warn(`[tg] ${tg.error} — API is up, storage is disabled.`);
+    return;
+  }
+
+  const client = new TelegramClient(
+    new StringSession(cfg.session || ""),
+    cfg.apiId,
+    cfg.apiHash,
+    { connectionRetries: 5 }
+  );
+
+  if (cfg.botToken) {
+    await client.start({ botAuthToken: cfg.botToken });
+    tg.mode = "bot";
+  } else {
+    await client.connect(); // pre-generated user session (see scripts/login.js)
+    tg.mode = "user";
+  }
+  tg.client = client;
+  tg.ready = true;
+  tg.error = null;
+  console.log(
+    `[tg] connected (${tg.mode}). Tip: set TG_SESSION to reuse this session:\n` +
+      `TG_SESSION=${client.session.save()}`
+  );
+
+  // One handler completes channel pairing and indexes documents posted
+  // directly into any channel paired with this deployment.
+  client.addEventHandler(handleChannelPost, new NewMessage({}));
+  console.log(`[tg] ready for per-user channel pairing`);
+  drainDeletionQueue().catch((error) => console.warn("[tg] deletion queue:", error.message));
+}
+
+const telegramChannelId = (entityOrId) => {
+  const source = entityOrId && entityOrId.id !== undefined ? entityOrId.id : entityOrId;
+  const raw = String(source?.toString?.() ?? source);
+  return raw.startsWith("-100") ? raw : `-100${raw.replace(/^-/, "")}`;
+};
+
+async function channelForStorage(storageId) {
+  if (!tg.ready || !tg.client) throw err(tg.error || "Telegram offline", 503);
+  if (tg.channels.has(storageId)) return tg.channels.get(storageId);
+  const storage = getStorage(storageId);
+  if (!storage) throw err("Telegram storage connection not found", 502);
+  const entity = await tg.client.getEntity(bigInt(storage.telegram_channel_id));
+  if (entity.className !== "Channel") throw err("paired Telegram destination is not a channel", 502);
+  if (entity.title && entity.title !== storage.channel_title) {
+    q(`UPDATE storage_connections SET channel_title=? WHERE id=?`).run(entity.title, storage.id);
+  }
+  tg.channels.set(storageId, entity);
+  return entity;
+}
+
+export async function handleChannelPost(ev) {
+  try {
+    const m = ev.message;
+    const cid = m?.peerId?.channelId;
+    if (!cid) return;
+    const channelId = telegramChannelId(cid);
+    const messageText = normalizePairingCode(m.message || "");
+
+    if (/^TM-PAIR-[A-F0-9]{12}$/.test(messageText)) {
+      const pairing = q(
+        `SELECT * FROM pairing_codes WHERE code_hash=? AND expires_at>?`
+      ).get(hashPairingCode(messageText), now());
+      if (!pairing) return;
+      const entity = await tg.client.getEntity(m.peerId);
+      try {
+        const storage = activateStorage(pairing.user_id, channelId, entity.title || "Telegram channel");
+        tg.channels.set(storage.id, entity);
+        q(`DELETE FROM pairing_codes WHERE user_id=?`).run(pairing.user_id);
+        await tg.client.sendMessage(entity, {
+          message: "TeleMoon connected. New uploads for this account will be stored in this channel.",
+        });
+        console.log(`[pairing] @${pairing.user_id} -> ${channelId}`);
+      } catch (pairingError) {
+        console.warn(`[pairing] ${pairingError.message}`);
+        await tg.client.sendMessage(entity, { message: `TeleMoon could not connect: ${pairingError.message}` });
+      }
+      return;
+    }
+
+    const storage = getStorageByChannel(channelId);
+    if (!storage) return;
+    const doc = m.media?.document;
+    if (!doc) return; // photos/stickers ignored — send as "File" to index
+    if ((m.message || "").startsWith("tm1;")) return; // our own upload part
+
+    const fnAttr = doc.attributes?.find(
+      (a) => a.className === "DocumentAttributeFilename"
+    );
+    const name = String(fnAttr?.fileName || `telegram_${m.id}`)
+      .trim()
+      .replace(/[/\\\0]/g, "-")
+      .slice(0, 255) || `telegram_${m.id}`;
+    const size = Number(doc.size?.toString?.() ?? doc.size);
+    const inbox = ensureInboxFolder(storage.user_id, storage.id);
+    const node = createFileNode({
+      parentId: inbox.id,
+      name,
+      size,
+      mime: doc.mimeType || null,
+      ownerId: storage.user_id,
+      storageId: storage.id,
+      parts: [{ msg_id: m.id, size, storage_id: storage.id }],
+    });
+    console.log(`[indexer] +${node.name} (${size} B) from channel post ${m.id}`);
+  } catch (e) {
+    console.error("[indexer]", e);
+  }
+}
+
+/** Upload a file from disk into the channel. Returns the message id. */
+export async function sendDocument(storageId, filePath, fileName, caption) {
+  const channel = await channelForStorage(storageId);
+  const msg = await tg.client.sendFile(channel, {
+    file: filePath,
+    caption,
+    forceDocument: true,
+    attributes: [new Api.DocumentAttributeFilename({ fileName })],
+  });
+  return msg.id;
+}
+
+export async function getMessage(storageId, msgId) {
+  const channel = await channelForStorage(storageId);
+  const [m] = await tg.client.getMessages(channel, { ids: [msgId] });
+  if (!m || !m.media) throw err(`message ${msgId} missing in channel (deleted?)`, 502);
+  return m;
+}
+
+export async function deleteMessages(messages) {
+  if (!messages.length) return;
+  const insert = q(
+    `INSERT OR IGNORE INTO deletion_queue(storage_id,msg_id,created_at) VALUES (?,?,?)`
+  );
+  for (const message of messages) {
+    if (message?.storage_id && message?.msg_id)
+      insert.run(message.storage_id, message.msg_id, now());
+  }
+  return drainDeletionQueue();
+}
+
+/** Retry-safe removal: queued rows survive restarts and Telegram outages. */
+export async function drainDeletionQueue() {
+  if (!tg.ready || !tg.client) return;
+  const grouped = new Map();
+  for (const message of q(`SELECT storage_id,msg_id FROM deletion_queue ORDER BY created_at`).all()) {
+    if (!grouped.has(message.storage_id)) grouped.set(message.storage_id, []);
+    grouped.get(message.storage_id).push(message.msg_id);
+  }
+  for (const [storageId, ids] of grouped) {
+    const channel = await channelForStorage(storageId).catch((error) => {
+      console.warn("[tg] deleteMessages storage:", error.message);
+      return null;
+    });
+    if (!channel) continue;
+    for (let i = 0; i < ids.length; i += 100) {
+      try {
+        const batch = ids.slice(i, i + 100);
+        await tg.client.deleteMessages(channel, batch, { revoke: true });
+        const placeholders = batch.map(() => "?").join(",");
+        q(`DELETE FROM deletion_queue WHERE storage_id=? AND msg_id IN (${placeholders})`)
+          .run(storageId, ...batch);
+      } catch (e) {
+        console.warn("[tg] deleteMessages:", e.message);
+        const batch = ids.slice(i, i + 100);
+        const placeholders = batch.map(() => "?").join(",");
+        q(`UPDATE deletion_queue SET attempts=attempts+1,last_error=?
+           WHERE storage_id=? AND msg_id IN (${placeholders})`)
+          .run(String(e.message || e).slice(0, 500), storageId, ...batch);
+      }
+    }
+  }
+}
+
+/**
+ * Stream bytes [from..to] (inclusive, chunk-local) of one stored message.
+ * MTProto wants offsets aligned to 4096 and requestSize | 1 MB, so we
+ * over-fetch to the previous 4 KB boundary and trim.
+ * `write(buf) -> Promise<boolean>` returns false to abort (client gone).
+ */
+export async function streamRange(storageId, msgId, from, to, write) {
+  const m = await getMessage(storageId, msgId);
+  const aligned = from - (from % 4096);
+  let skip = from - aligned;
+  let remaining = to - from + 1;
+
+  for await (const piece of tg.client.iterDownload({
+    file: m.media,
+    offset: bigInt(aligned),
+    requestSize: 512 * 1024,
+  })) {
+    let buf = Buffer.from(piece);
+    if (skip > 0) {
+      if (buf.length <= skip) { skip -= buf.length; continue; }
+      buf = buf.subarray(skip);
+      skip = 0;
+    }
+    if (buf.length > remaining) buf = buf.subarray(0, remaining);
+    remaining -= buf.length;
+    const keepGoing = await write(buf);
+    if (!keepGoing || remaining <= 0) break; // breaking closes the iterator
+  }
+}
