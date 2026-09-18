@@ -87,6 +87,7 @@ Ink `#0E1220` / panel `#171C30` / line `#262D4A` / text `#E9ECFA` / muted `#9099
 - 2026-07-19 Drive UI switched from table rows to card grid ("simple boxes"); `design-principle.md` added as the design contract for all pages.
 - 2026-09-18 Signed-out users now land on a product overview with the single-door sign-in card; Telegram upload captions retain the `tm1;` protocol line and add readable file, part, and size details.
 - 2026-09-18 Frontend accessibility hardening added native card controls, focus-managed dialogs, announced status/error states, a touch-friendly move picker, race-safe debounced search, and coarse-pointer layouts with 44px targets.
+- 2026-09-18 Layout refinement keeps sign-in ahead of feature detail on narrow screens, reserves card action space so controls never cover filenames, prioritizes drive search on mobile, and clears fixed upload/status surfaces safely.
 
 ## Roadmap
 

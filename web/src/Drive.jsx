@@ -20,7 +20,7 @@ const focusableSelector = [
   "select:not([disabled])", "textarea:not([disabled])", "[tabindex]:not([tabindex='-1'])",
 ].join(",");
 
-function ModalShell({ title, onClose, children, className = "", initialFocusRef }) {
+function ModalShell({ title, onClose, children, className = "", initialFocusRef, headerActions }) {
   const titleId = useId();
   const dialogRef = useRef(null);
   const closeRef = useRef(onClose);
@@ -70,9 +70,12 @@ function ModalShell({ title, onClose, children, className = "", initialFocusRef 
         role="dialog" aria-modal="true" aria-labelledby={titleId}>
         <header>
           <h2 id={titleId} className="upname">{title}</h2>
-          <button type="button" className="ghost icon-btn" onClick={onClose} aria-label="Close dialog">
-            <XIcon />
-          </button>
+          <div className="modal-head-actions">
+            {headerActions}
+            <button type="button" className="ghost icon-btn" onClick={onClose} aria-label="Close dialog">
+              <XIcon />
+            </button>
+          </div>
         </header>
         {children}
       </section>
@@ -718,10 +721,10 @@ export default function Drive({ user, onLogout, onStorage }) {
       ) : null}
 
       {preview && (
-        <ModalShell title={preview.name} onClose={() => setPreview(null)} className="preview-modal">
-            <div className="preview-actions">
-              <a className="btn" href={api.fileUrl(preview.id, true)}><DownloadIcon /> Download</a>
-            </div>
+        <ModalShell title={preview.name} onClose={() => setPreview(null)} className="preview-modal"
+          headerActions={(
+            <a className="btn" href={api.fileUrl(preview.id, true)}><DownloadIcon /> Download</a>
+          )}>
             <div className="modal-body">
               {preview.mime?.startsWith("image/") && (
                 <img src={api.fileUrl(preview.id)} alt={preview.name} />

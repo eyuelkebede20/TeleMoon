@@ -43,35 +43,15 @@ export default function Auth({ onAuth }) {
 
       <section className="landing-hero" id="top">
         <div className="landing-copy">
-          <p className="eyebrow">Your space. Your channel.</p>
           <h1>A calm, private drive<br />built on Telegram.</h1>
           <p className="landing-lede">
             Organize, preview, and download your files from a familiar drive—while the
             actual bytes live in a private Telegram channel you control.
           </p>
-
-          <div className="landing-features" aria-label="TeleMoon features">
-            <article className="feature-box">
-              <span className="feature-mark">01</span>
-              <h2>Bring your channel</h2>
-              <p>Connect a private Telegram channel in a few guided steps.</p>
-            </article>
-            <article className="feature-box">
-              <span className="feature-mark">02</span>
-              <h2>Keep big files</h2>
-              <p>Large uploads are split safely and put back together on download.</p>
-            </article>
-            <article className="feature-box">
-              <span className="feature-mark">03</span>
-              <h2>Use it like a drive</h2>
-              <p>Folders, previews, search, sharing, and a recoverable trash.</p>
-            </article>
-          </div>
         </div>
 
         <form className="auth-card" id="signin" onSubmit={submit}>
           <div className="auth-heading">
-            <p className="eyebrow">Welcome back</p>
             <h2>Enter your drive</h2>
             <p>Use your TeleMoon handle and password.</p>
           </div>
@@ -105,6 +85,21 @@ export default function Auth({ onAuth }) {
             {needInvite ? " with an invite code." : "."}
           </p>
         </form>
+
+        <div className="landing-features" aria-label="TeleMoon features">
+          <article className="feature-box">
+            <h2>Bring your channel</h2>
+            <p>Connect a private Telegram channel in a few guided steps.</p>
+          </article>
+          <article className="feature-box">
+            <h2>Keep big files</h2>
+            <p>Large uploads are split safely and put back together on download.</p>
+          </article>
+          <article className="feature-box">
+            <h2>Use it like a drive</h2>
+            <p>Folders, previews, search, sharing, and a recoverable trash.</p>
+          </article>
+        </div>
       </section>
 
       <footer className="landing-foot">

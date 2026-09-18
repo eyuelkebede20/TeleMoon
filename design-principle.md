@@ -61,9 +61,10 @@ The moon/night metaphor is used sparingly, in microcopy only.
 ## 8. Per-page checklists
 
 **Landing / Enter (Auth)** — a quiet product promise and three compact feature
-boxes beside one sign-in box. Keep the form immediately visible: `@handle` +
-password, one gold button, and the invite field only when the server requires
-it. No tabs, no second auth mode, no competing call to action.
+boxes beside one sign-in box. On narrow screens the form comes before the
+feature details, so it remains immediately visible: `@handle` + password, one
+gold button, and the invite field only when the server requires it. No tabs, no
+second auth mode, no competing call to action.
 
 **Link storage (Connect)** — one hero box with the paste-a-link input and one
 gold Connect button. Below, the user's channels/groups as a grid of simple
@@ -74,7 +75,8 @@ never a wall of text.
 **Drive** — sticky topbar (brand, search pill, New folder, gold Upload,
 avatar). Breadcrumbs under it. Content is a responsive grid of file/folder
 boxes: icon, name (one line, ellipsis), mono meta line, actions appear on
-hover/focus and remain visible on touch devices. Moving always has an explicit
+hover/focus in a reserved footer and remain visible on touch devices. On narrow
+screens, search comes before creation and upload controls. Moving always has an explicit
 folder picker; drag-and-drop is only a desktop shortcut. Statusbar pinned
 bottom: connection dot, channel name, storage link. Uploads panel bottom-right
 with MoonProgress rows.
