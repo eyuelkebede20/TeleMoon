@@ -39,9 +39,14 @@ export default function Connect({ status, canSkip, user, onDone, onLogout }) {
   }
 
   async function copyCode() {
-    await navigator.clipboard.writeText(pairing.code);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 1800);
+    setErr("");
+    try {
+      await navigator.clipboard.writeText(pairing.code);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch {
+      setErr("Could not copy automatically. Select the code and copy it manually.");
+    }
   }
 
   return (
@@ -98,7 +103,7 @@ export default function Connect({ status, canSkip, user, onDone, onLogout }) {
             <button className="pair-code mono" onClick={copyCode} title="Copy pairing code">
               {pairing.code}
             </button>
-            <p className="dim pair-wait">
+            <p className="dim pair-wait" aria-live="polite">
               {copied ? "Copied." : `Waiting for the Telegram message… Expires at ${new Date(pairing.expiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.`}
             </p>
             <button className="ghost" onClick={beginPairing} disabled={busy}>Generate a new code</button>

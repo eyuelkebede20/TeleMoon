@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { api, token, savedUser } from "./api.js";
 import { Crescent } from "./icons.jsx";
 
@@ -11,8 +11,13 @@ export default function Auth({ onAuth }) {
   const [invite, setInvite] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
+  const handleRef = useRef(null);
 
   useEffect(() => { api.publicStatus().then(setSt).catch(() => {}); }, []);
+  useEffect(() => {
+    if (window.matchMedia("(min-width: 721px) and (pointer: fine)").matches)
+      handleRef.current?.focus({ preventScroll: true });
+  }, []);
   const needInvite = !!st && st.users > 0 && st.inviteRequired;
 
   async function submit(e) {
@@ -74,9 +79,9 @@ export default function Auth({ onAuth }) {
           <label>Handle
             <div className="at-field">
               <span aria-hidden="true">@</span>
-              <input value={handle} placeholder="moonfriend"
+              <input ref={handleRef} value={handle} placeholder="moonfriend"
                 onChange={(e) => setHandle(e.target.value.replace(/^@/, ""))}
-                required autoFocus autoComplete="username"
+                required autoComplete="username"
                 spellCheck={false} autoCapitalize="none" />
             </div>
           </label>

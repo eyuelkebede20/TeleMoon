@@ -13,9 +13,12 @@ export const Crescent = (p) => (
 /** The signature: an upload's progress rendered as a waxing moon. */
 export function MoonProgress({ pct = 0, size = 26 }) {
   const r = 10, c = 12;
-  const x = c - r + (2 * r * Math.min(Math.max(pct, 0), 100)) / 100; // terminator sweeps left→right
+  const progress = Math.min(Math.max(pct, 0), 100);
+  const x = c - r + (2 * r * progress) / 100; // terminator sweeps left→right
   return (
-    <svg viewBox="0 0 24 24" width={size} height={size} aria-label={`${Math.round(pct)}%`}>
+    <svg viewBox="0 0 24 24" width={size} height={size} role="progressbar"
+      aria-label="Upload progress" aria-valuemin="0" aria-valuemax="100"
+      aria-valuenow={Math.round(progress)}>
       <defs>
         <clipPath id={`mp${size}`}><circle cx={c} cy={c} r={r} /></clipPath>
       </defs>
@@ -62,6 +65,9 @@ export const TrashIcon = (p) => (
 );
 export const RestoreIcon = (p) => (
   <S {...p}><path d="M4 7v5h5" /><path d="M5.5 12a7 7 0 1 0 2-5" /></S>
+);
+export const MoveIcon = (p) => (
+  <S {...p}><path d="M5 7h9" /><path d="m11 4 3 3-3 3" /><path d="M19 17h-9" /><path d="m13 14-3 3 3 3" /></S>
 );
 export const EditIcon = (p) => (
   <S {...p}><path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17z" /><path d="m13.5 6.5 3 3" /></S>

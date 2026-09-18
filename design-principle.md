@@ -74,5 +74,7 @@ never a wall of text.
 **Drive** — sticky topbar (brand, search pill, New folder, gold Upload,
 avatar). Breadcrumbs under it. Content is a responsive grid of file/folder
 boxes: icon, name (one line, ellipsis), mono meta line, actions appear on
-hover/focus. Statusbar pinned bottom: connection dot, channel name, storage
-link. Uploads panel bottom-right with MoonProgress rows.
+hover/focus and remain visible on touch devices. Moving always has an explicit
+folder picker; drag-and-drop is only a desktop shortcut. Statusbar pinned
+bottom: connection dot, channel name, storage link. Uploads panel bottom-right
+with MoonProgress rows.

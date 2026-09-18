@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { api, uploadFile } from "./api.js";
 import {
   Crescent, MoonProgress, iconFor, UploadIcon, PlusIcon, SearchIcon,
   DownloadIcon, TrashIcon, EditIcon, XIcon, LogoutIcon, ChevR, ShareIcon,
-  RestoreIcon,
+  RestoreIcon, FolderIcon, MoveIcon,
 } from "./icons.jsx";
 
 const fmtBytes = (n) => {
@@ -15,10 +15,77 @@ const fmtBytes = (n) => {
 const fmtDate = (t) =>
   new Date(t).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
 
+const focusableSelector = [
+  "a[href]", "button:not([disabled])", "input:not([disabled])",
+  "select:not([disabled])", "textarea:not([disabled])", "[tabindex]:not([tabindex='-1'])",
+].join(",");
+
+function ModalShell({ title, onClose, children, className = "", initialFocusRef }) {
+  const titleId = useId();
+  const dialogRef = useRef(null);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+
+  useEffect(() => {
+    const previousFocus = document.activeElement;
+    const priorOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    const frame = requestAnimationFrame(() => {
+      const requested = initialFocusRef?.current;
+      const fallback = dialogRef.current?.querySelector(focusableSelector);
+      (requested || fallback)?.focus({ preventScroll: true });
+    });
+    const onKeyDown = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closeRef.current();
+        return;
+      }
+      if (event.key !== "Tab" || !dialogRef.current) return;
+      const controls = [...dialogRef.current.querySelectorAll(focusableSelector)]
+        .filter((element) => element.getClientRects().length > 0);
+      if (!controls.length) return;
+      const first = controls[0];
+      const last = controls[controls.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      cancelAnimationFrame(frame);
+      document.removeEventListener("keydown", onKeyDown);
+      document.body.style.overflow = priorOverflow;
+      previousFocus?.focus?.({ preventScroll: true });
+    };
+  }, [initialFocusRef]);
+
+  return (
+    <div className="modal" onMouseDown={(event) => event.target === event.currentTarget && onClose()}>
+      <section ref={dialogRef} className={`modal-card ${className}`.trim()}
+        role="dialog" aria-modal="true" aria-labelledby={titleId}>
+        <header>
+          <h2 id={titleId} className="upname">{title}</h2>
+          <button type="button" className="ghost icon-btn" onClick={onClose} aria-label="Close dialog">
+            <XIcon />
+          </button>
+        </header>
+        {children}
+      </section>
+    </div>
+  );
+}
+
 function ActionModal({ modal, onClose, onConfirm }) {
   const [val, setVal] = useState(modal.node?.name || "");
   const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
   const inputRef = useRef(null);
+  const cancelRef = useRef(null);
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -29,8 +96,12 @@ function ActionModal({ modal, onClose, onConfirm }) {
     e?.preventDefault();
     setErr("");
     if (!["remove", "purge", "emptyTrash"].includes(modal.type) && !val.trim()) return;
+    setBusy(true);
     const res = await onConfirm(val.trim());
-    if (res) setErr(res);
+    if (res) {
+      setErr(res);
+      setBusy(false);
+    }
   };
 
   const title = modal.type === "mkdir" ? "New folder"
@@ -40,72 +111,136 @@ function ActionModal({ modal, onClose, onConfirm }) {
     : "Delete permanently";
 
   return (
-    <div className="modal" onClick={onClose}>
-      <div className="modal-card" style={{ maxWidth: 400, minHeight: 'auto' }} onClick={e => e.stopPropagation()}>
-        <header>
-          <span className="upname">{title}</span>
-          <button type="button" className="ghost" onClick={onClose}><XIcon /></button>
-        </header>
-        <div className="modal-body" style={{ minHeight: 'auto', padding: "24px 20px", display: "block" }}>
-          <form onSubmit={submit} style={{ display: "flex", flexDirection: "column", gap: "16px" }}>
+    <ModalShell title={title} onClose={onClose} className="action-modal"
+      initialFocusRef={["remove", "purge", "emptyTrash"].includes(modal.type) ? cancelRef : inputRef}>
+        <div className="modal-body modal-form-body">
+          <form className="modal-form" onSubmit={submit}>
             {["remove", "purge", "emptyTrash"].includes(modal.type) ? (
-              <p style={{ margin: 0, fontSize: "0.95rem", lineHeight: 1.4 }}>
+              <p className="modal-message">
                 {modal.type === "remove"
-                  ? <>Move "{modal.node.name}" to Trash?<br/><span className="dim" style={{ fontSize: "0.85rem" }}>You can restore it later.</span></>
+                  ? <>Move "{modal.node.name}" to Trash?<br/><span className="dim modal-detail">You can restore it later.</span></>
                   : modal.type === "emptyTrash"
-                    ? <>Permanently delete everything in Trash?<br/><span className="dim" style={{ fontSize: "0.85rem" }}>Telegram copies will also be queued for deletion. This cannot be undone.</span></>
-                    : <>Permanently delete "{modal.node.name}"?<br/><span className="dim" style={{ fontSize: "0.85rem" }}>Its Telegram copies will also be queued for deletion. This cannot be undone.</span></>}
+                    ? <>Permanently delete everything in Trash?<br/><span className="dim modal-detail">Telegram copies will also be queued for deletion. This cannot be undone.</span></>
+                    : <>Permanently delete "{modal.node.name}"?<br/><span className="dim modal-detail">Its Telegram copies will also be queued for deletion. This cannot be undone.</span></>}
               </p>
             ) : (
-              <input ref={inputRef} value={val} onChange={e => setVal(e.target.value)}
-                placeholder={modal.type === "mkdir" ? "Folder name" : "Name"}
-                style={{ padding: "10px 12px", borderRadius: "8px", border: "1px solid var(--line)", background: "var(--ink-2)", width: "100%", outline: "none", color: "var(--text)" }}
-                onFocus={e => e.target.style.borderColor = "var(--moon-deep)"}
-                onBlur={e => e.target.style.borderColor = "var(--line)"}
-              />
+              <label className="field-label">
+                {modal.type === "mkdir" ? "Folder name" : "Name"}
+                <input ref={inputRef} value={val} onChange={e => setVal(e.target.value)}
+                  maxLength={255} autoComplete="off" />
+              </label>
             )}
-            {err && <div style={{ color: "var(--danger)", fontSize: "0.85rem" }}>{err}</div>}
-            <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end", marginTop: "4px" }}>
-              <button type="button" className="btn" onClick={onClose}>Cancel</button>
+            {err && <p className="auth-err" role="alert">{err}</p>}
+            <div className="modal-actions">
+              <button ref={cancelRef} type="button" className="btn" onClick={onClose}>Cancel</button>
               <button type="submit" className={["purge", "emptyTrash"].includes(modal.type) ? "btn" : "btn btn-moon"}
-                style={["purge", "emptyTrash"].includes(modal.type) ? { background: "var(--danger)", borderColor: "var(--danger)", color: "#000" } : {}}>
-                {modal.type === "remove" ? "Move to Trash" : modal.type === "purge" ? "Delete permanently" : modal.type === "emptyTrash" ? "Empty Trash" : "Confirm"}
+                disabled={busy}
+                data-danger={["purge", "emptyTrash"].includes(modal.type) || undefined}>
+                {busy ? "Working…" : modal.type === "remove" ? "Move to Trash" : modal.type === "purge" ? "Delete permanently" : modal.type === "emptyTrash" ? "Empty Trash" : "Confirm"}
               </button>
             </div>
           </form>
         </div>
-      </div>
-    </div>
+    </ModalShell>
   );
 }
 
 function ShareModal({ modal, onClose }) {
   const [copied, setCopied] = useState(false);
-  const copy = () => {
-    navigator.clipboard.writeText(modal.url);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+  const [copyError, setCopyError] = useState("");
+  const copy = async () => {
+    setCopyError("");
+    try {
+      await navigator.clipboard.writeText(modal.url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      setCopyError("Could not copy automatically. Select the link and copy it manually.");
+    }
   };
   return (
-    <div className="modal" onClick={onClose}>
-      <div className="modal-card" style={{ maxWidth: 460, minHeight: 'auto' }} onClick={e => e.stopPropagation()}>
-        <header>
-          <span className="upname">Share link</span>
-          <button type="button" className="ghost" onClick={onClose}><XIcon /></button>
-        </header>
-        <div className="modal-body" style={{ minHeight: 'auto', padding: "24px 20px", display: "block" }}>
-          <p style={{ margin: "0 0 16px", fontSize: "0.95rem" }}>
+    <ModalShell title="Share link" onClose={onClose} className="share-modal">
+        <div className="modal-body modal-form-body">
+          <p className="modal-message share-message">
             Anyone with this link can download "{modal.node.name}".
           </p>
-          <div style={{ display: "flex", gap: 8 }}>
-            <input readOnly value={modal.url} 
-              style={{ flex: 1, padding: "10px 12px", borderRadius: "8px", border: "1px solid var(--line)", background: "var(--ink-2)", outline: "none", color: "var(--text)", fontFamily: "var(--mono)", fontSize: "0.85rem" }} 
-              onClick={e => e.target.select()} />
+          <div className="share-row">
+            <label className="sr-only" htmlFor="share-url">Share URL</label>
+            <input id="share-url" className="share-input" readOnly value={modal.url}
+              onFocus={e => e.target.select()} />
             <button className="btn btn-moon" onClick={copy}>{copied ? "Copied!" : "Copy"}</button>
           </div>
+          {copyError && <p className="auth-err share-error" role="alert">{copyError}</p>}
+          <span className="sr-only" aria-live="polite">{copied ? "Link copied" : ""}</span>
+        </div>
+    </ModalShell>
+  );
+}
+
+function MoveModal({ node, onClose, onMoved }) {
+  const [folderId, setFolderId] = useState("root");
+  const [view, setView] = useState(null);
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    setView(null);
+    setErr("");
+    api.children(folderId)
+      .then((next) => active && setView(next))
+      .catch((error) => active && setErr(error.message));
+    return () => { active = false; };
+  }, [folderId]);
+
+  const moveHere = async () => {
+    setBusy(true);
+    setErr("");
+    try {
+      await api.move(node.id, folderId);
+      onMoved();
+    } catch (error) {
+      setErr(error.message);
+      setBusy(false);
+    }
+  };
+
+  const folders = (view?.children || []).filter((item) => item.type === "folder" && item.id !== node.id);
+  const currentName = view?.folder?.name || "Home";
+
+  return (
+    <ModalShell title={`Move “${node.name}”`} onClose={onClose} className="move-modal">
+      <div className="modal-body move-body">
+        <nav className="move-crumbs" aria-label="Destination folder">
+          {(view?.breadcrumb || [{ id: "root", name: "Home" }]).map((crumb, index, all) => (
+            <span key={crumb.id} className="crumb-wrap">
+              {index > 0 && <ChevR />}
+              <button className={`crumb ${index === all.length - 1 ? "on" : ""}`}
+                onClick={() => setFolderId(crumb.id)}>{crumb.name}</button>
+            </span>
+          ))}
+        </nav>
+        <div className="move-list" aria-live="polite">
+          {!view && !err && <p className="dim move-state">Reading folders…</p>}
+          {view && folders.length === 0 && <p className="dim move-state">No folders inside {currentName}.</p>}
+          {folders.map((folder) => (
+            <button key={folder.id} className="move-folder" onClick={() => setFolderId(folder.id)}>
+              <FolderIcon className="c-moon" />
+              <span>{folder.name}</span>
+              <ChevR />
+            </button>
+          ))}
+        </div>
+        {err && <p className="auth-err" role="alert">{err}</p>}
+        <div className="modal-actions">
+          <button className="btn" onClick={onClose}>Cancel</button>
+          <button className="btn btn-moon" onClick={moveHere}
+            disabled={busy || !view || folderId === node.parent_id}>
+            {busy ? "Moving…" : folderId === node.parent_id ? "Already here" : `Move to ${currentName}`}
+          </button>
         </div>
       </div>
-    </div>
+    </ModalShell>
   );
 }
 
@@ -115,6 +250,7 @@ export default function Drive({ user, onLogout, onStorage }) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [q, setQ] = useState("");
+  const [debouncedQ, setDebouncedQ] = useState("");
   const [searching, setSearching] = useState(false);
   const [trashMode, setTrashMode] = useState(false);
   const [uploads, setUploads] = useState([]); // {key,name,pct,part,parts,status,handle}
@@ -126,24 +262,37 @@ export default function Drive({ user, onLogout, onStorage }) {
   const resumeInput = useRef(null);
   const resumeTarget = useRef(null);
   const queue = useRef(Promise.resolve());
+  const refreshRun = useRef(0);
   const cwd = stack[stack.length - 1];
 
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedQ(q.trim()), 250);
+    return () => clearTimeout(timer);
+  }, [q]);
+
   const refresh = useCallback(async () => {
+    const run = ++refreshRun.current;
     setLoading(true); setError("");
     try {
       if (trashMode) {
         const { items } = await api.trash();
+        if (run !== refreshRun.current) return;
         setItems(items); setSearching(false);
-      } else if (q.trim()) {
-        const { results } = await api.search(q.trim());
+      } else if (debouncedQ) {
+        const { results } = await api.search(debouncedQ);
+        if (run !== refreshRun.current) return;
         setItems(results); setSearching(true);
       } else {
         const { children } = await api.children(cwd.id);
+        if (run !== refreshRun.current) return;
         setItems(children); setSearching(false);
       }
-    } catch (e) { setError(e.message); }
-    finally { setLoading(false); }
-  }, [cwd.id, q, trashMode]);
+    } catch (e) {
+      if (run === refreshRun.current) setError(e.message);
+    } finally {
+      if (run === refreshRun.current) setLoading(false);
+    }
+  }, [cwd.id, debouncedQ, trashMode]);
 
   useEffect(() => { refresh(); }, [refresh]);
   useEffect(() => {
@@ -309,6 +458,7 @@ export default function Drive({ user, onLogout, onStorage }) {
 
   function mkdir() { setModal({ type: "mkdir" }); }
   function rename(node) { setModal({ type: "rename", node }); }
+  function move(node) { setModal({ type: "move", node }); }
   function remove(node) { setModal({ type: "remove", node }); }
   function purge(node) { setModal({ type: "purge", node }); }
   async function restore(node) {
@@ -320,7 +470,7 @@ export default function Drive({ user, onLogout, onStorage }) {
       const { shareId } = await api.share(node.id);
       const url = `${window.location.origin}/api/share/${shareId}/content`;
       setModal({ type: "share", url, node });
-    } catch (e) { setModal({ type: "error", error: e.message }); }
+    } catch (e) { setError(`Could not create a share link — ${e.message}`); }
   }
 
   /* OS file drop vs internal row drag */
@@ -366,14 +516,15 @@ export default function Drive({ user, onLogout, onStorage }) {
       }
       enqueue(filesToUpload, emptyFolders);
     } catch (err) {
-      alert("Error reading dropped folder: " + err.message);
+      setError(`Could not read that dropped folder — ${err.message}`);
     }
   }
   async function dropOnFolder(e, folder) {
     e.preventDefault(); e.stopPropagation();
     const id = e.dataTransfer.getData("application/x-telemoon-node");
     if (!id || id === folder.id) return;
-    try { await api.move(id, folder.id); refresh(); } catch (ex) { alert(ex.message); }
+    try { await api.move(id, folder.id); refresh(); }
+    catch (ex) { setError(`Could not move that item — ${ex.message}`); }
   }
 
   const previewable = (n) =>
@@ -418,7 +569,7 @@ export default function Drive({ user, onLogout, onStorage }) {
             resumeTarget.current = null;
             e.target.value = "";
           }} />
-          <button className="ghost user" title={`@${user.handle} — sign out`} onClick={onLogout}>
+          <button className="ghost user" aria-label={`Sign out @${user.handle}`} onClick={onLogout}>
             <span className="avatar">{user.handle?.[0]?.toUpperCase() || "@"}</span>
             <LogoutIcon />
           </button>
@@ -440,8 +591,8 @@ export default function Drive({ user, onLogout, onStorage }) {
       </nav>
 
       <main className="content">
-        {loading && <div className="empty">Reading the sky…</div>}
-        {!loading && error && <div className="empty err">{error}</div>}
+        {loading && <div className="empty" role="status">Reading the sky…</div>}
+        {!loading && error && <div className="empty err" role="alert">{error}</div>}
         {!loading && !error && items.length === 0 && (
           <div className="empty">
             {trashMode ? "Trash is empty." : searching ? "Nothing matches." : "This folder is empty — drop files anywhere to upload."}
@@ -452,49 +603,62 @@ export default function Drive({ user, onLogout, onStorage }) {
           <div className="cards">
             {items.map((n) => {
               const Icon = iconFor(n);
-              return (
-                <div key={n.id} className="card node" tabIndex={trashMode ? undefined : 0} role={trashMode ? undefined : "button"}
-                  draggable={!trashMode}
-                  onDragStart={(e) => e.dataTransfer.setData("application/x-telemoon-node", n.id)}
-                  onDragOver={(e) => { if (n.type === "folder" && !isOsDrag(e)) e.preventDefault(); }}
-                  onDrop={(e) => n.type === "folder" && dropOnFolder(e, n)}
-                  onClick={() => open(n)}
-                  onKeyDown={(e) => e.key === "Enter" && open(n)}>
+              const cardContent = (
+                <>
                   <div className="card-ico">
-                    {!trashMode && n.type === "file" && n.mime?.startsWith("image/") && n.size < 5 * 1024 * 1024 ? (
-                      <img src={api.fileUrl(n.id)} alt={n.name} loading="lazy" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '4px' }} />
+                    {!trashMode && n.type === "file" && n.mime?.startsWith("image/") && n.size < 1024 * 1024 ? (
+                      <img className="card-thumb" src={api.fileUrl(n.id)} alt="" loading="lazy"
+                        decoding="async" width="320" height="180" />
                     ) : (
                       <Icon className={n.type === "folder" ? "c-moon" : "c-mut"} />
                     )}
                   </div>
-                  <div className="card-name" title={n.name}>{n.name}</div>
-                  <div className="card-meta mono dim">
+                  <span className="card-name" title={n.name}>{n.name}</span>
+                  <span className="card-meta mono dim">
                     {n.type === "file" ? `${fmtBytes(n.size)} · ` : ""}{fmtDate(n.updated_at)}
-                  </div>
-                  <div className="card-acts" onClick={(e) => e.stopPropagation()}>
+                  </span>
+                </>
+              );
+              return (
+                <article key={n.id} className="card node"
+                  draggable={!trashMode}
+                  onDragStart={(e) => e.dataTransfer.setData("application/x-telemoon-node", n.id)}
+                  onDragOver={(e) => { if (n.type === "folder" && !isOsDrag(e)) e.preventDefault(); }}
+                  onDrop={(e) => n.type === "folder" && dropOnFolder(e, n)}>
+                  {trashMode ? (
+                    <div className="card-open card-static">{cardContent}</div>
+                  ) : (
+                    <button className="card-open" onClick={() => open(n)}
+                      aria-label={`${n.type === "folder" ? "Open folder" : "Preview file"}: ${n.name}`}>
+                      {cardContent}
+                    </button>
+                  )}
+                  <div className="card-acts">
                     {trashMode ? (
                       <>
-                        <button className="ghost" onClick={() => restore(n)} title="Restore"><RestoreIcon /></button>
-                        <button className="ghost danger" onClick={() => purge(n)} title="Delete permanently"><TrashIcon /></button>
+                        <button className="ghost icon-btn" onClick={() => restore(n)} aria-label={`Restore ${n.name}`}><RestoreIcon /></button>
+                        <button className="ghost danger icon-btn" onClick={() => purge(n)} aria-label={`Delete ${n.name} permanently`}><TrashIcon /></button>
                       </>
                     ) : n.type === "file" && (
-                      <button className="ghost" onClick={() => share(n)} title="Share"><ShareIcon /></button>
+                      <button className="ghost icon-btn" onClick={() => share(n)} aria-label={`Share ${n.name}`}><ShareIcon /></button>
                     )}
                     {!trashMode && <>
-                      <a className="ghost" href={n.type === "folder" ? api.folderZipUrl(n.id) : api.fileUrl(n.id, true)} title="Download"><DownloadIcon /></a>
-                      <button className="ghost" onClick={() => rename(n)} title="Rename"><EditIcon /></button>
-                      <button className="ghost danger" onClick={() => remove(n)} title="Move to Trash"><TrashIcon /></button>
+                      <a className="ghost icon-btn" href={n.type === "folder" ? api.folderZipUrl(n.id) : api.fileUrl(n.id, true)}
+                        aria-label={`Download ${n.name}`}><DownloadIcon /></a>
+                      <button className="ghost icon-btn" onClick={() => rename(n)} aria-label={`Rename ${n.name}`}><EditIcon /></button>
+                      <button className="ghost icon-btn" onClick={() => move(n)} aria-label={`Move ${n.name}`}><MoveIcon /></button>
+                      <button className="ghost danger icon-btn" onClick={() => remove(n)} aria-label={`Move ${n.name} to Trash`}><TrashIcon /></button>
                     </>}
                   </div>
-                </div>
+                </article>
               );
             })}
           </div>
         )}
       </main>
 
-      <footer className="statusbar">
-        <span className={`dot ${status?.telegram === "connected" ? "ok" : "off"}`} />
+      <footer className="statusbar" role="status" aria-live="polite">
+        <span className={`dot ${status?.telegram === "connected" ? "ok" : "off"}`} aria-hidden="true" />
         {status?.telegram === "connected"
           ? <>Linked to <b>{status.channel}</b> · parts of {fmtBytes(status.chunkBytes)}</>
           : <>Storage offline{status?.error ? ` — ${status.error}` : ""}</>}
@@ -502,7 +666,7 @@ export default function Drive({ user, onLogout, onStorage }) {
       </footer>
 
       {uploads.length > 0 && (
-        <aside className="uppanel" aria-label="Uploads">
+        <aside className="uppanel" aria-label="Uploads" aria-live="polite">
           <h3>Uploads</h3>
           {uploads.map((u) => (
             <div key={u.key} className={`uprow ${u.status}`}>
@@ -518,9 +682,9 @@ export default function Drive({ user, onLogout, onStorage }) {
                 </span>
               </div>
               {["error", "interrupted"].includes(u.status) && (
-                <button className="ghost" onClick={() => chooseResume(u)} title="Resume"><UploadIcon /></button>
+                <button className="ghost icon-btn" onClick={() => chooseResume(u)} aria-label={`Resume ${u.name}`}><UploadIcon /></button>
               )}
-              {u.status !== "done" && <button className="ghost" onClick={() => cancelUpload(u)} title="Cancel and discard"><XIcon /></button>}
+              {u.status !== "done" && <button className="ghost icon-btn" onClick={() => cancelUpload(u)} aria-label={`Cancel and discard ${u.name}`}><XIcon /></button>}
             </div>
           ))}
         </aside>
@@ -528,6 +692,11 @@ export default function Drive({ user, onLogout, onStorage }) {
 
       {modal && modal.type === "share" ? (
         <ShareModal modal={modal} onClose={() => setModal(null)} />
+      ) : modal?.type === "move" ? (
+        <MoveModal node={modal.node} onClose={() => setModal(null)} onMoved={() => {
+          setModal(null);
+          refresh();
+        }} />
       ) : modal ? (
         <ActionModal 
           modal={modal}
@@ -549,24 +718,19 @@ export default function Drive({ user, onLogout, onStorage }) {
       ) : null}
 
       {preview && (
-        <div className="modal" onClick={() => setPreview(null)}>
-          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
-            <header>
-              <span className="upname">{preview.name}</span>
-              <div>
-                <a className="btn" href={api.fileUrl(preview.id, true)}><DownloadIcon /> Download</a>
-                <button className="ghost" onClick={() => setPreview(null)} aria-label="Close"><XIcon /></button>
-              </div>
-            </header>
+        <ModalShell title={preview.name} onClose={() => setPreview(null)} className="preview-modal">
+            <div className="preview-actions">
+              <a className="btn" href={api.fileUrl(preview.id, true)}><DownloadIcon /> Download</a>
+            </div>
             <div className="modal-body">
               {preview.mime?.startsWith("image/") && (
                 <img src={api.fileUrl(preview.id)} alt={preview.name} />
               )}
               {preview.mime?.startsWith("video/") && (
-                <video src={api.fileUrl(preview.id)} controls autoPlay />
+                <video src={api.fileUrl(preview.id)} controls />
               )}
               {preview.mime?.startsWith("audio/") && (
-                <audio src={api.fileUrl(preview.id)} controls autoPlay />
+                <audio src={api.fileUrl(preview.id)} controls />
               )}
               {preview.mime === "application/pdf" && (
                 <iframe src={api.fileUrl(preview.id)} title={preview.name} />
@@ -577,8 +741,7 @@ export default function Drive({ user, onLogout, onStorage }) {
                 </p>
               )}
             </div>
-          </div>
-        </div>
+        </ModalShell>
       )}
 
       {dragOver && !trashMode && (
