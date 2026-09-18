@@ -74,17 +74,56 @@ a { color: var(--sky); text-decoration: none; }
 .ghost:hover { color: var(--text); background: #ffffff10; }
 .ghost.danger:hover { color: var(--danger); }
 
-/* ---------- auth (Enter) ---------- */
-.auth-wrap { min-height: 100%; display: grid; place-items: center; padding: 24px; }
+/* ---------- landing / auth ---------- */
+.landing {
+  width: min(1180px, 100%); min-height: 100%; margin: 0 auto;
+  padding: 0 30px; display: flex; flex-direction: column;
+}
+.landing-nav {
+  min-height: 76px; display: flex; align-items: center; justify-content: space-between;
+  border-bottom: 1px solid var(--line);
+}
+.landing-brand {
+  display: inline-flex; align-items: center; gap: 10px;
+  color: var(--text); font-size: 1.08rem; font-weight: 700; letter-spacing: -0.02em;
+}
+.landing-signin { font-size: 0.9rem; font-weight: 600; }
+.landing-hero {
+  flex: 1; display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(320px, 420px);
+  align-items: center; gap: clamp(44px, 8vw, 110px); padding: 72px 0 82px;
+}
+.landing-copy { min-width: 0; }
+.eyebrow {
+  margin: 0; color: var(--moon); font-family: var(--mono); font-size: 0.78rem;
+  font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase;
+}
+.landing-copy > h1 {
+  max-width: 700px; margin: 16px 0 20px; font-size: clamp(2.5rem, 5.5vw, 4.9rem);
+  line-height: 0.98; letter-spacing: -0.055em;
+}
+.landing-lede {
+  max-width: 600px; margin: 0; color: var(--muted);
+  font-size: clamp(1rem, 1.5vw, 1.12rem); line-height: 1.65;
+}
+.landing-features {
+  display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-top: 42px;
+}
+.feature-box {
+  min-width: 0; padding: 16px; background: color-mix(in srgb, var(--panel) 88%, transparent);
+  border: 1px solid var(--line); border-radius: 14px;
+}
+.feature-mark { color: var(--moon-deep); font-family: var(--mono); font-size: 0.74rem; }
+.feature-box h2 { margin: 18px 0 6px; font-size: 0.94rem; letter-spacing: -0.01em; }
+.feature-box p { margin: 0; color: var(--muted); font-size: 0.8rem; line-height: 1.45; }
 .auth-card {
-  width: min(400px, 100%); padding: 34px 32px 30px;
+  width: 100%; padding: 34px 32px 30px;
   background: linear-gradient(180deg, var(--panel-2), var(--panel));
   border: 1px solid var(--line); border-radius: 18px;
   display: flex; flex-direction: column; gap: 14px;
 }
-.auth-logo { display: flex; align-items: center; gap: 10px; }
-.auth-logo h1 { margin: 0; font-size: 1.55rem; font-weight: 700; letter-spacing: -0.02em; }
-.auth-sub { margin: -6px 0 6px; color: var(--muted); font-size: 0.92rem; }
+.auth-heading { margin-bottom: 6px; }
+.auth-heading h2 { margin: 8px 0 6px; font-size: 1.55rem; letter-spacing: -0.025em; }
+.auth-heading > p:last-child { margin: 0; color: var(--muted); font-size: 0.88rem; }
 .auth-card label { display: flex; flex-direction: column; gap: 6px; font-size: 0.85rem; color: var(--muted); }
 .auth-card input {
   padding: 10px 12px; border-radius: var(--r);
@@ -103,7 +142,13 @@ a { color: var(--sky); text-decoration: none; }
 }
 .at-field input { flex: 1; border: 0; background: none; outline: none; padding-left: 4px; }
 .auth-err { color: var(--danger); font-size: 0.85rem; margin: 0; }
+.auth-submit { justify-content: center; margin-top: 2px; }
 .auth-hint { margin: 0; color: var(--muted); font-size: 0.8rem; text-align: center; }
+.landing-foot {
+  display: flex; justify-content: space-between; gap: 24px; padding: 20px 0 24px;
+  border-top: 1px solid var(--line); color: var(--muted); font-size: 0.78rem;
+}
+.landing-foot span:first-child { color: var(--text); font-weight: 600; }
 
 /* ---------- connect (Link storage) ---------- */
 .connect-wrap {
@@ -283,6 +328,16 @@ a { color: var(--sky); text-decoration: none; }
 
 /* ---------- responsive ---------- */
 @media (max-width: 720px) {
+  .landing { padding: 0 20px; }
+  .landing-nav { min-height: 66px; }
+  .landing-hero { grid-template-columns: 1fr; gap: 42px; padding: 52px 0 64px; }
+  .landing-copy > h1 { font-size: clamp(2.5rem, 13vw, 4rem); }
+  .landing-features { grid-template-columns: 1fr; margin-top: 32px; }
+  .feature-box { display: grid; grid-template-columns: 28px 1fr; column-gap: 8px; }
+  .feature-box h2 { margin: 0 0 5px; }
+  .feature-box p { grid-column: 2; }
+  .auth-card { padding: 28px 22px 24px; }
+  .landing-foot { flex-direction: column; gap: 6px; }
   .topbar { flex-wrap: wrap; }
   .searchbox { order: 3; max-width: none; width: 100%; }
   .cards { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }

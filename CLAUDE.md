@@ -17,7 +17,7 @@ Browser (React/Vite, web/) ── JSON /api ──► Express (server/src)
 ## Invariants — do not break
 
 1. **Chunks are immutable.** A file = ordered `chunks(file_id, idx, msg_id, size)`. Edits = new upload. Never rewrite a Telegram message.
-2. **Caption protocol**: every TeleMoon-authored part message starts `tm1;f=<name>;p=<i>/<n>`. The indexer skips `tm1;`-prefixed posts; foreign document posts get indexed into `/Telegram Inbox` as single-chunk files. Changing the prefix breaks self/foreign discrimination.
+2. **Caption protocol**: every TeleMoon-authored part message starts `tm1;f=<name>;p=<i>/<n>`. Human-readable file, part, and size details follow on separate lines. The indexer skips `tm1;`-prefixed posts; foreign document posts get indexed into `/Telegram Inbox` as single-chunk files. Changing the prefix breaks self/foreign discrimination.
 3. **MTProto alignment**: `iterDownload` offset must be 4096-aligned, `requestSize` 4096-multiple ≤1 MB. `streamRange` over-fetches to the boundary and trims — keep that logic if touching downloads.
 4. **`node.size` = Σ chunk sizes.** `complete` endpoint enforces; Range math depends on it.
 5. **Parts ≤ 2 GB (bot) / 4 GB (premium user session).** `CHUNK_MB` clamped at 1900 in bot mode default; server clamps regardless of client.
@@ -85,6 +85,7 @@ Ink `#0E1220` / panel `#171C30` / line `#262D4A` / text `#E9ECFA` / muted `#9099
 - 2026-09-15 Direct channel-id/link entry replaced by proof-of-access pairing codes. Codes are random, stored only as hashes, expire after ten minutes and are consumed after a successful channel post.
 - 2026-09-15 Upload manifests survive reloads, stored parts are reused, network failures preserve progress, completion is idempotent, and cancellation is explicit.
 - 2026-07-19 Drive UI switched from table rows to card grid ("simple boxes"); `design-principle.md` added as the design contract for all pages.
+- 2026-09-18 Signed-out users now land on a product overview with the single-door sign-in card; Telegram upload captions retain the `tm1;` protocol line and add readable file, part, and size details.
 
 ## Roadmap
 

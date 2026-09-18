@@ -20,6 +20,7 @@ import {
   tg, sendDocument, deleteMessages, streamRange,
 } from "./telegram.js";
 import { hashPairingCode, newPairingCode } from "./pairing.js";
+import { uploadCaption } from "./caption.js";
 
 export const api = Router();
 const bad = (res, code, error) => res.status(code).json({ error });
@@ -412,7 +413,12 @@ api.put("/uploads/:id/parts/:idx", auth, async (req, res) => {
       totalParts > 1
         ? `${up.name}.part${String(idx + 1).padStart(3, "0")}`
         : up.name;
-    const caption = `tm1;f=${up.name.slice(0, 200)};p=${idx + 1}/${totalParts}`;
+    const caption = uploadCaption({
+      name: up.name,
+      part: idx + 1,
+      totalParts,
+      partSize: received,
+    });
     const msgId = await sendDocument(up.storage_id, tmp, partName, caption);
 
     // Retried part? Drop the superseded Telegram message.

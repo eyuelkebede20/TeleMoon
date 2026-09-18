@@ -28,36 +28,84 @@ export default function Auth({ onAuth }) {
   }
 
   return (
-    <div className="auth-wrap">
-      <form className="auth-card" onSubmit={submit}>
-        <div className="auth-logo"><Crescent /><h1>TeleMoon</h1></div>
-        <p className="auth-sub">Your Telegram channel, as a drive.</p>
+    <main className="landing">
+      <header className="landing-nav">
+        <a className="landing-brand" href="#top" aria-label="TeleMoon home">
+          <Crescent /><span>TeleMoon</span>
+        </a>
+        <a className="landing-signin" href="#signin">Sign in</a>
+      </header>
 
-        <label>Handle
-          <div className="at-field">
-            <span aria-hidden="true">@</span>
-            <input value={handle} placeholder="moonfriend"
-              onChange={(e) => setHandle(e.target.value.replace(/^@/, ""))}
-              required autoFocus autoComplete="username"
-              spellCheck={false} autoCapitalize="none" />
+      <section className="landing-hero" id="top">
+        <div className="landing-copy">
+          <p className="eyebrow">Your space. Your channel.</p>
+          <h1>A calm, private drive<br />built on Telegram.</h1>
+          <p className="landing-lede">
+            Organize, preview, and download your files from a familiar drive—while the
+            actual bytes live in a private Telegram channel you control.
+          </p>
+
+          <div className="landing-features" aria-label="TeleMoon features">
+            <article className="feature-box">
+              <span className="feature-mark">01</span>
+              <h2>Bring your channel</h2>
+              <p>Connect a private Telegram channel in a few guided steps.</p>
+            </article>
+            <article className="feature-box">
+              <span className="feature-mark">02</span>
+              <h2>Keep big files</h2>
+              <p>Large uploads are split safely and put back together on download.</p>
+            </article>
+            <article className="feature-box">
+              <span className="feature-mark">03</span>
+              <h2>Use it like a drive</h2>
+              <p>Folders, previews, search, sharing, and a recoverable trash.</p>
+            </article>
           </div>
-        </label>
-        <label>Password
-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)}
-            required minLength={6} autoComplete="current-password" />
-        </label>
-        {needInvite && (
-          <label>Invite code <span className="dim">(only for new handles)</span>
-            <input value={invite} onChange={(e) => setInvite(e.target.value)} />
-          </label>
-        )}
+        </div>
 
-        {err && <p className="auth-err" role="alert">{err}</p>}
-        <button className="btn btn-moon" disabled={busy}>
-          {busy ? "One moment…" : "Enter"}
-        </button>
-        <p className="auth-hint">New handle? It becomes yours the first time you enter.</p>
-      </form>
-    </div>
+        <form className="auth-card" id="signin" onSubmit={submit}>
+          <div className="auth-heading">
+            <p className="eyebrow">Welcome back</p>
+            <h2>Enter your drive</h2>
+            <p>Use your TeleMoon handle and password.</p>
+          </div>
+
+          <label>Handle
+            <div className="at-field">
+              <span aria-hidden="true">@</span>
+              <input value={handle} placeholder="moonfriend"
+                onChange={(e) => setHandle(e.target.value.replace(/^@/, ""))}
+                required autoFocus autoComplete="username"
+                spellCheck={false} autoCapitalize="none" />
+            </div>
+          </label>
+          <label>Password
+            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)}
+              placeholder="At least 6 characters" required minLength={6}
+              autoComplete="current-password" />
+          </label>
+          {needInvite && (
+            <label>Invite code <span className="dim">(only for new handles)</span>
+              <input value={invite} onChange={(e) => setInvite(e.target.value)} />
+            </label>
+          )}
+
+          {err && <p className="auth-err" role="alert">{err}</p>}
+          <button className="btn btn-moon auth-submit" disabled={busy}>
+            {busy ? "Opening your drive…" : "Enter TeleMoon"}
+          </button>
+          <p className="auth-hint">
+            First time here? Enter a new handle to create your account
+            {needInvite ? " with an invite code." : "."}
+          </p>
+        </form>
+      </section>
+
+      <footer className="landing-foot">
+        <span>TeleMoon</span>
+        <span>Your files stay mapped to your Telegram storage.</span>
+      </footer>
+    </main>
   );
 }
