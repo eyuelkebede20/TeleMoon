@@ -6,7 +6,7 @@ Talks **MTProto** (GramJS) — not the Bot HTTP API, which caps transfers at 20/
 
 ## Setup (10 minutes)
 
-1. **API keys** — sign in at [my.telegram.org](https://my.telegram.org) → *API development tools* → copy `api_id` and `api_hash` into `server/.env` (`cp server/.env.example server/.env`).
+1. **API keys** — sign in at [my.telegram.org](https://my.telegram.org) → _API development tools_ → copy `api_id` and `api_hash` into `server/.env` (`cp server/.env.example server/.env`).
 2. **Identity** — either run `npm run login` for a **user session** (premium → 4 GB parts), or create a **bot** via [@BotFather](https://t.me/BotFather). The configured account or bot must be an administrator in every paired channel.
 3. **Install & run**
    ```bash
