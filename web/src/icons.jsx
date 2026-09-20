@@ -86,9 +86,13 @@ export const LinkIcon = (p) => (
 export const UsersIcon = (p) => (
   <S {...p}><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20a6.5 6.5 0 0 1 13 0" /><path d="M16 5a3.5 3.5 0 0 1 0 6.6M15.5 14a6.5 6.5 0 0 1 6 6" /></S>
 );
-export const MegaphoneIcon = (p) => (
-  <S {...p}><path d="M3 11v2a1 1 0 0 0 1 1h2l4 4V7L6 10H4a1 1 0 0 0-1 1z" /><path d="M14 8a4 4 0 0 1 0 8M17 5a8 8 0 0 1 0 14" /></S>
+export const LockIcon = (p) => (
+  <S {...p}><rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></S>
 );
+export const ShieldIcon = (p) => (
+  <S {...p}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></S>
+);
+
 
 export function iconFor(node) {
   if (node.type === "folder") return FolderIcon;

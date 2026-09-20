@@ -8,7 +8,7 @@ import bigInt from "big-integer";
 import { cfg } from "./config.js";
 import {
   q, now, ensureInboxFolder, createFileNode, getStorage, getStorageByChannel,
-  activateStorage,
+  activateStorage, getActiveStorage,
 } from "./db.js";
 import { hashPairingCode, normalizePairingCode } from "./pairing.js";
 
@@ -172,36 +172,44 @@ export async function deleteMessages(messages) {
   return drainDeletionQueue();
 }
 
+let isDraining = false;
+
 /** Retry-safe removal: queued rows survive restarts and Telegram outages. */
 export async function drainDeletionQueue() {
-  if (!tg.ready || !tg.client) return;
-  const grouped = new Map();
-  for (const message of q(`SELECT storage_id,msg_id FROM deletion_queue ORDER BY created_at`).all()) {
-    if (!grouped.has(message.storage_id)) grouped.set(message.storage_id, []);
-    grouped.get(message.storage_id).push(message.msg_id);
-  }
-  for (const [storageId, ids] of grouped) {
-    const channel = await channelForStorage(storageId).catch((error) => {
-      console.warn("[tg] deleteMessages storage:", error.message);
-      return null;
-    });
-    if (!channel) continue;
-    for (let i = 0; i < ids.length; i += 100) {
-      try {
-        const batch = ids.slice(i, i + 100);
-        await tg.client.deleteMessages(channel, batch, { revoke: true });
-        const placeholders = batch.map(() => "?").join(",");
-        q(`DELETE FROM deletion_queue WHERE storage_id=? AND msg_id IN (${placeholders})`)
-          .run(storageId, ...batch);
-      } catch (e) {
-        console.warn("[tg] deleteMessages:", e.message);
+  if (!tg.ready || !tg.client || isDraining) return;
+  isDraining = true;
+  try {
+    // Drop messages that permanently failed after 10 retries
+    q(`DELETE FROM deletion_queue WHERE attempts >= 10`).run();
+
+    const grouped = new Map();
+    for (const message of q(`SELECT storage_id,msg_id FROM deletion_queue WHERE attempts < 10 ORDER BY created_at`).all()) {
+      if (!grouped.has(message.storage_id)) grouped.set(message.storage_id, []);
+      grouped.get(message.storage_id).push(message.msg_id);
+    }
+    for (const [storageId, ids] of grouped) {
+      const channel = await channelForStorage(storageId).catch((error) => {
+        console.warn("[tg] deleteMessages storage:", error.message);
+        return null;
+      });
+      if (!channel) continue;
+      for (let i = 0; i < ids.length; i += 100) {
         const batch = ids.slice(i, i + 100);
         const placeholders = batch.map(() => "?").join(",");
-        q(`UPDATE deletion_queue SET attempts=attempts+1,last_error=?
-           WHERE storage_id=? AND msg_id IN (${placeholders})`)
-          .run(String(e.message || e).slice(0, 500), storageId, ...batch);
+        try {
+          await tg.client.deleteMessages(channel, batch, { revoke: true });
+          q(`DELETE FROM deletion_queue WHERE storage_id=? AND msg_id IN (${placeholders})`)
+            .run(storageId, ...batch);
+        } catch (e) {
+          console.warn("[tg] deleteMessages:", e.message);
+          q(`UPDATE deletion_queue SET attempts=attempts+1,last_error=?
+             WHERE storage_id=? AND msg_id IN (${placeholders})`)
+            .run(String(e.message || e).slice(0, 500), storageId, ...batch);
+        }
       }
     }
+  } finally {
+    isDraining = false;
   }
 }
 
@@ -233,4 +241,92 @@ export async function streamRange(storageId, msgId, from, to, write) {
     const keepGoing = await write(buf);
     if (!keepGoing || remaining <= 0) break; // breaking closes the iterator
   }
+}
+
+/**
+ * Scans channel history for unindexed documents and verifies integrity of existing chunks.
+ */
+export async function scanAndRepairChannel(userId) {
+  if (!tg.ready || !tg.client) throw err(tg.error || "Telegram offline", 503);
+  const storage = getActiveStorage(userId);
+  if (!storage) throw err("No active Telegram storage connected for this account", 400);
+
+  const channel = await channelForStorage(storage.id);
+
+  // 1. Audit user's mapped chunks
+  const userChunks = q(
+    `SELECT c.file_id, c.idx, c.msg_id, c.storage_id, n.name
+     FROM chunks c JOIN nodes n ON c.file_id = n.id
+     WHERE n.owner_id = ? AND c.storage_id = ? AND n.deleted_at IS NULL`
+  ).all(userId, storage.id);
+
+  const missingChunks = [];
+  for (let i = 0; i < userChunks.length; i += 100) {
+    const batch = userChunks.slice(i, i + 100);
+    try {
+      const msgs = await tg.client.getMessages(channel, { ids: batch.map((c) => c.msg_id) });
+      batch.forEach((c, idx) => {
+        const m = msgs[idx];
+        if (!m || !m.media) {
+          missingChunks.push({
+            fileId: c.file_id,
+            fileName: c.name,
+            partIndex: c.idx,
+            msgId: c.msg_id,
+          });
+        }
+      });
+    } catch (auditErr) {
+      console.warn("[scan/repair audit]", auditErr.message);
+    }
+  }
+
+  // 2. Discover unindexed documents posted directly in the channel
+  const existingMsgIds = new Set(
+    q(`SELECT msg_id FROM chunks WHERE storage_id = ?`).all(storage.id).map((r) => r.msg_id)
+  );
+
+  const newlyIndexedFiles = [];
+  try {
+    for await (const m of tg.client.iterMessages(channel, { limit: 500 })) {
+      if (!m || !m.id) continue;
+      if (existingMsgIds.has(m.id)) continue;
+      if ((m.message || "").startsWith("tm1;")) continue; // TeleMoon upload part
+      const doc = m.media?.document;
+      if (!doc) continue;
+
+      const fnAttr = doc.attributes?.find((a) => a.className === "DocumentAttributeFilename");
+      const name = String(fnAttr?.fileName || `telegram_${m.id}`)
+        .trim()
+        .replace(/[/\\\0]/g, "-")
+        .slice(0, 255) || `telegram_${m.id}`;
+      const size = Number(doc.size?.toString?.() ?? doc.size);
+      const inbox = ensureInboxFolder(userId, storage.id);
+      const node = createFileNode({
+        parentId: inbox.id,
+        name,
+        size,
+        mime: doc.mimeType || null,
+        ownerId: userId,
+        storageId: storage.id,
+        parts: [{ msg_id: m.id, size, storage_id: storage.id }],
+      });
+      existingMsgIds.add(m.id);
+      newlyIndexedFiles.push({
+        id: node.id,
+        name: node.name,
+        size: node.size,
+        msgId: m.id,
+      });
+    }
+  } catch (scanErr) {
+    console.warn("[scan/repair history]", scanErr.message);
+  }
+
+  return {
+    channelTitle: storage.channel_title || "Telegram Channel",
+    totalChunksChecked: userChunks.length,
+    missingChunks,
+    newlyIndexedFiles,
+  };
 }

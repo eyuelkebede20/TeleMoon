@@ -24,6 +24,8 @@ async function j(method, url, body) {
   return data;
 }
 
+import { encryptChunkBlob } from "./crypto.js";
+
 export const api = {
   publicStatus: () => j("GET", "/api/public-status"),
   status: () => j("GET", "/api/status"),
@@ -46,7 +48,10 @@ export const api = {
   createUpload: (b) => j("POST", "/api/uploads", b),
   completeUpload: (id) => j("POST", `/api/uploads/${id}/complete`),
   abortUpload: (id) => j("DELETE", `/api/uploads/${id}`),
-  share: (id) => j("POST", `/api/nodes/${id}/share`),
+  share: (id, expiresInHours = null) => j("POST", `/api/nodes/${id}/share`, { expiresInHours }),
+  nodeShares: (id) => j("GET", `/api/nodes/${id}/shares`),
+  revokeShare: (id) => j("DELETE", `/api/shares/${id}`),
+  scanChannel: () => j("POST", "/api/tg/scan"),
   fileUrl: (id, dl = false) => `/api/files/${id}/content${dl ? "?dl=1" : ""}`,
   folderZipUrl: (id) => `/api/folders/${id}/download`,
 };
@@ -74,43 +79,66 @@ function putPart(uploadId, idx, blob, onProgress, handle) {
 }
 
 /**
- * Slice the file client-side and ship parts sequentially.
+ * Slice the file client-side, optionally encrypting each part, and ship parts sequentially.
  * onProgress({loaded,total,part,parts}); handle.cancel() aborts + cleans up.
  */
-export async function uploadFile(file, parentId, onProgress, handle = {}, existing = null) {
-  const session = existing || await api.createUpload({
-    name: file.name, size: file.size, mime: file.type || null, parentId,
-    lastModified: file.lastModified,
-  });
-  const { id, chunkSize } = session;
-  handle.uploadId = id;
+export async function uploadFile(file, parentId, onProgress, handle = {}, existing = null, passphrase = "") {
+  // If encrypting, calculate estimated overhead (28 bytes metadata + 16 bytes auth tag per chunk)
+  const isEncrypted = Boolean(passphrase || handle.passphrase || existing?.encrypted);
+  const activePassphrase = passphrase || handle.passphrase || "";
+
+  let uploadSize = file.size;
+  const chunkSize = existing?.chunkSize || 1536 * 1024 * 1024;
   const parts = file.size === 0 ? 0 : Math.ceil(file.size / chunkSize);
+  if (isEncrypted && parts > 0) {
+    uploadSize = file.size + parts * (16 + 12 + 16); // salt (16) + iv (12) + auth tag (16)
+  }
+
+  const session = existing || await api.createUpload({
+    name: file.name,
+    size: uploadSize,
+    mime: isEncrypted ? "application/octet-stream" : file.type || null,
+    parentId,
+    lastModified: file.lastModified,
+    encrypted: isEncrypted ? 1 : 0,
+  });
+
+  const { id } = session;
+  handle.uploadId = id;
   const stored = new Set((session.parts || []).map((part) => part.idx));
   let done = (session.parts || []).reduce((sum, part) => sum + part.size, 0);
-  onProgress({ loaded: done, total: file.size, part: stored.size, parts });
+  onProgress({ loaded: done, total: session.size, part: stored.size, parts });
+
+  let sharedSalt = null;
   try {
     for (let i = 0; i < parts; i++) {
       if (handle.cancelled) throw Object.assign(new Error("cancelled"), { cancelled: true });
       if (stored.has(i)) continue;
-      const blob = file.slice(i * chunkSize, Math.min((i + 1) * chunkSize, file.size));
+      let rawBlob = file.slice(i * session.chunkSize, Math.min((i + 1) * session.chunkSize, file.size));
+      let blobToSend = rawBlob;
+
+      if (isEncrypted && activePassphrase) {
+        const encResult = await encryptChunkBlob(rawBlob, activePassphrase, sharedSalt);
+        blobToSend = encResult.blob;
+        sharedSalt = encResult.salt;
+      }
+
       let attempt = 0;
       for (;;) {
         try {
-          await putPart(id, i, blob, (loaded) =>
-            onProgress({ loaded: done + loaded, total: file.size, part: i + 1, parts }), handle);
+          await putPart(id, i, blobToSend, (loaded) =>
+            onProgress({ loaded: done + loaded, total: session.size, part: i + 1, parts }), handle);
           break;
         } catch (e) {
           if (e.cancelled || ++attempt >= 5) throw e;
           await new Promise((r) => setTimeout(r, Math.min(1000 * 2 ** attempt, 15000)));
         }
       }
-      done += blob.size;
-      onProgress({ loaded: done, total: file.size, part: i + 1, parts });
+      done += blobToSend.size;
+      onProgress({ loaded: done, total: session.size, part: i + 1, parts });
     }
     return await api.completeUpload(id);
   } catch (e) {
-    // Keep successfully stored parts on the server. The user can retry now or
-    // reselect the file after a refresh; only explicit cancellation discards it.
     throw e;
   }
 }

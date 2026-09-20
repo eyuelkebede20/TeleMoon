@@ -2,22 +2,20 @@ import { Router } from "express";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
-import { Transform } from "node:stream";
+import { PassThrough, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { once } from "node:events";
-import { createRequire } from "node:module";
-const require = createRequire(import.meta.url);
-const archiver = require("archiver");
+import { ZipArchive } from "archiver";
 import bcrypt from "bcryptjs";
 import { cfg } from "./config.js";
 import {
   db, q, now, uid, getNode, getOwnedNode, breadcrumb, children, subtreeIds,
-  isAncestor, uniqueName, createFileNode, createShare, getShare, claimLegacyNodes,
-  getActiveStorage, claimLegacyStorage,
+  isAncestor, uniqueName, createFileNode, createShare, getShare, getNodeShares,
+  deleteShare, claimLegacyNodes, getActiveStorage, claimLegacyStorage,
 } from "./db.js";
 import { sign, auth } from "./auth.js";
 import {
-  tg, sendDocument, deleteMessages, streamRange,
+  tg, sendDocument, deleteMessages, streamRange, scanAndRepairChannel,
 } from "./telegram.js";
 import { hashPairingCode, newPairingCode } from "./pairing.js";
 import { uploadCaption } from "./caption.js";
@@ -59,6 +57,7 @@ const uploadSummary = (upload) => {
     mime: upload.mime,
     parentId: upload.parent_id,
     chunkSize: upload.chunk_size,
+    encrypted: upload.encrypted ? 1 : 0,
     lastModified: upload.last_modified,
     createdAt: upload.created_at,
     updatedAt: upload.updated_at,
@@ -68,12 +67,19 @@ const uploadSummary = (upload) => {
 };
 
 // A small in-process guard is enough for a single TeleMoon instance and avoids
-// allowing password guessing at network speed. A reverse proxy can add a
-// distributed limiter when the app is scaled horizontally.
+// allowing password guessing at network speed. Expired keys are periodically
+// pruned to avoid memory leaks.
 const authAttempts = new Map();
 function authRateLimit(req, res, next) {
   const key = req.ip || req.socket.remoteAddress || "unknown";
   const time = now();
+
+  if (authAttempts.size > 200) {
+    for (const [ip, entry] of authAttempts.entries()) {
+      if (entry.resetAt <= time) authAttempts.delete(ip);
+    }
+  }
+
   const prior = authAttempts.get(key);
   const entry = !prior || prior.resetAt <= time
     ? { count: 0, resetAt: time + 15 * 60 * 1000 }
@@ -327,8 +333,35 @@ api.get("/search", auth, (req, res) => {
 api.post("/nodes/:id/share", auth, (req, res) => {
   const node = ownedNode(req, req.params.id, { allowRoot: false });
   if (!node || node.type !== "file") return bad(res, 404, "file not found");
-  const shareId = createShare(node.id);
-  res.json({ shareId });
+  const { expiresInHours } = req.body || {};
+  let expiresAt = null;
+  if (Number.isFinite(expiresInHours) && expiresInHours > 0) {
+    expiresAt = now() + Math.round(expiresInHours * 3600 * 1000);
+  }
+  const shareId = createShare(node.id, expiresAt);
+  res.json({ shareId, expiresAt });
+});
+
+api.get("/nodes/:id/shares", auth, (req, res) => {
+  const node = ownedNode(req, req.params.id, { allowRoot: false });
+  if (!node || node.type !== "file") return bad(res, 404, "file not found");
+  const shares = getNodeShares(node.id);
+  res.json({ shares });
+});
+
+api.delete("/shares/:id", auth, (req, res) => {
+  const ok = deleteShare(req.params.id, req.user.id);
+  if (!ok) return bad(res, 404, "share link not found");
+  res.json({ ok: true });
+});
+
+api.post("/tg/scan", auth, async (req, res) => {
+  try {
+    const report = await scanAndRepairChannel(req.user.id);
+    res.json(report);
+  } catch (e) {
+    bad(res, e.status || 500, e.message);
+  }
 });
 
 /* -------------------------------------------------------- chunked uploads */
@@ -350,7 +383,7 @@ api.get("/uploads/:id", auth, (req, res) => {
 });
 
 api.post("/uploads", auth, (req, res) => {
-  const { name, size, mime, parentId, lastModified } = req.body || {};
+  const { name, size, mime, parentId, lastModified, encrypted } = req.body || {};
   const parent = ownedNode(req, parentId);
   if (!parent || parent.type !== "folder") return bad(res, 404, "parent not found");
   const fileName = cleanName(name);
@@ -363,11 +396,11 @@ api.post("/uploads", auth, (req, res) => {
   q(`DELETE FROM uploads WHERE user_id=? AND status='completed' AND updated_at<?`)
     .run(req.user.id, timestamp - 7 * 24 * 60 * 60 * 1000);
   q(`INSERT INTO uploads(
-       id,name,parent_id,size,mime,chunk_size,user_id,storage_id,status,last_modified,created_at,updated_at
-     ) VALUES (?,?,?,?,?,?,?,?, 'active',?,?,?)`)
+       id,name,parent_id,size,mime,chunk_size,user_id,storage_id,encrypted,status,last_modified,created_at,updated_at
+     ) VALUES (?,?,?,?,?,?,?,?,?, 'active',?,?,?)`)
     .run(
       id, fileName, parentId, size, String(mime || "").slice(0, 255) || null,
-      cfg.chunkBytes, req.user.id, storage.id,
+      cfg.chunkBytes, req.user.id, storage.id, encrypted ? 1 : 0,
       Number.isSafeInteger(lastModified) && lastModified >= 0 ? lastModified : null,
       timestamp, timestamp
     );
@@ -457,7 +490,8 @@ api.post("/uploads/:id/complete", auth, (req, res) => {
   db.transaction(() => {
     node = createFileNode({
       parentId: up.parent_id, name: up.name, size: up.size,
-      mime: up.mime, ownerId: up.user_id, storageId: up.storage_id, parts,
+      mime: up.mime, ownerId: up.user_id, storageId: up.storage_id,
+      encrypted: up.encrypted, parts,
     });
     q(`DELETE FROM upload_parts WHERE upload_id=?`).run(up.id);
     q(`UPDATE uploads SET status='completed',node_id=?,updated_at=? WHERE id=?`)
@@ -506,12 +540,15 @@ async function serveNodeContent(req, res, node) {
     }
   }
 
+  const isDangerousInline = /^(text\/html|application\/xhtml\+xml|image\/svg\+xml)/i.test(node.mime || "");
+  const dispositionType = req.query.dl === "1" || isDangerousInline ? "attachment" : "inline";
+
   res.status(status).set({
     "Accept-Ranges": "bytes",
     "Content-Type": node.mime || "application/octet-stream",
     "Content-Length": String(total === 0 ? 0 : end - start + 1),
     "Content-Disposition":
-      `${req.query.dl === "1" ? "attachment" : "inline"}; ` +
+      `${dispositionType}; ` +
       `filename*=UTF-8''${encodeURIComponent(node.name)}`,
   });
   if (status === 206) res.set("Content-Range", `bytes ${start}-${end}/${total}`);
@@ -552,6 +589,9 @@ api.get("/files/:id/content", auth, async (req, res) => {
 api.get("/share/:id/content", async (req, res) => {
   const share = getShare(req.params.id);
   if (!share) return bad(res, 404, "share link not found");
+  if (share.expires_at && share.expires_at <= now()) {
+    return bad(res, 410, "this share link has expired");
+  }
   serveNodeContent(req, res, getNode(share.file_id));
 });
 
@@ -564,12 +604,15 @@ api.get("/folders/:id/download", auth, async (req, res) => {
     "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(rootFolder.name)}.zip`,
   });
 
-  const archive = new archiver.ZipArchive({ zlib: { level: 1 } });
-  archive.on('error', (err) => console.error("[zip error]", err));
+  const archive = new ZipArchive({ zlib: { level: 1 } });
+  archive.on("error", (err) => console.error("[zip error]", err));
   archive.pipe(res);
 
   let closed = false;
-  res.on("close", () => (closed = true));
+  res.on("close", () => {
+    closed = true;
+    try { archive.abort(); } catch {}
+  });
 
   async function addFolder(folderId, basePath) {
     if (closed) return;
@@ -583,9 +626,7 @@ api.get("/folders/:id/download", auth, async (req, res) => {
         await addFolder(child.id, childPath);
       } else {
         const fileChunks = q(`SELECT * FROM chunks WHERE file_id=? ORDER BY idx`).all(child.id);
-        const { PassThrough } = await import("node:stream");
         const pt = new PassThrough();
-        
         archive.append(pt, { name: childPath });
         
         try {
@@ -600,8 +641,9 @@ api.get("/folders/:id/download", auth, async (req, res) => {
           }
         } catch (e) {
           console.error("[zip stream]", e.message);
+        } finally {
+          pt.end();
         }
-        pt.end();
       }
     }
   }

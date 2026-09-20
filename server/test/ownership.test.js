@@ -256,3 +256,74 @@ test("security response headers are enabled", async () => {
   assert.match(response.headers["content-security-policy"], /default-src 'self'/);
   assert.equal(response.headers["x-powered-by"], undefined);
 });
+
+test("expiring share links and revocation work as expected", async () => {
+  // Create expiring share
+  const shareRes = await request(app)
+    .post("/api/nodes/member-file/share")
+    .set(bearer(member.token))
+    .send({ expiresInHours: 24 })
+    .expect(200);
+
+  assert.ok(shareRes.body.shareId);
+  assert.ok(shareRes.body.expiresAt > Date.now());
+
+  // List shares
+  const listRes = await request(app)
+    .get("/api/nodes/member-file/shares")
+    .set(bearer(member.token))
+    .expect(200);
+  assert.equal(listRes.body.shares.length, 1);
+  assert.equal(listRes.body.shares[0].id, shareRes.body.shareId);
+
+  // Revoke share
+  await request(app)
+    .delete(`/api/shares/${shareRes.body.shareId}`)
+    .set(bearer(member.token))
+    .expect(200);
+
+  // Verify revoked
+  await request(app).get(`/api/share/${shareRes.body.shareId}/content`).expect(404);
+
+  // Manually insert an expired share to test 410 Gone
+  q(`INSERT INTO shares(id,file_id,created_at,expires_at) VALUES ('expired-share','member-file',?,?)`)
+    .run(Date.now() - 10000, Date.now() - 5000);
+  await request(app).get("/api/share/expired-share/content").expect(410);
+});
+
+test("encrypted uploads persist encrypted flag on the resulting file node", async () => {
+  const upload = await request(app)
+    .post("/api/uploads")
+    .set(bearer(member.token))
+    .send({ name: "secret.txt", size: 0, mime: "application/octet-stream", parentId: "member-folder", encrypted: 1 })
+    .expect(200);
+  assert.equal(upload.body.encrypted, 1);
+
+  const completed = await request(app)
+    .post(`/api/uploads/${upload.body.id}/complete`)
+    .set(bearer(member.token))
+    .expect(200);
+  assert.equal(completed.body.encrypted, 1);
+
+  const childrenRes = await request(app)
+    .get("/api/nodes/member-folder/children")
+    .set(bearer(member.token))
+    .expect(200);
+  const fileNode = childrenRes.body.children.find((n) => n.id === completed.body.id);
+  assert.equal(fileNode.encrypted, 1);
+});
+
+test("channel scan endpoint audits storage and returns report", async () => {
+  tg.client = {
+    getMessages: async () => [],
+    iterMessages: async function* () {},
+  };
+  const response = await request(app)
+    .post("/api/tg/scan")
+    .set(bearer(member.token))
+    .expect(200);
+  assert.ok(response.body.channelTitle);
+  assert.ok(Array.isArray(response.body.missingChunks));
+  assert.ok(Array.isArray(response.body.newlyIndexedFiles));
+});
+

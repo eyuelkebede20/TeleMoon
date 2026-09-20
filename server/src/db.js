@@ -5,7 +5,15 @@ import { nanoid } from "nanoid";
 import { cfg } from "./config.js";
 
 fs.mkdirSync(cfg.dataDir, { recursive: true });
-fs.mkdirSync(path.join(cfg.dataDir, "tmp"), { recursive: true });
+const tmpDir = path.join(cfg.dataDir, "tmp");
+fs.mkdirSync(tmpDir, { recursive: true });
+try {
+  for (const file of fs.readdirSync(tmpDir)) {
+    fs.rmSync(path.join(tmpDir, file), { recursive: true, force: true });
+  }
+} catch (e) {
+  console.warn("[db] tmp cleanup warning:", e.message);
+}
 
 export const db = new Database(path.join(cfg.dataDir, "telemoon.db"));
 db.pragma("journal_mode = WAL");
@@ -111,15 +119,21 @@ function ensureColumn(table, column, definition) {
 ensureColumn("nodes", "storage_id", "TEXT");
 ensureColumn("nodes", "deleted_at", "INTEGER");
 ensureColumn("nodes", "trash_root_id", "TEXT");
+ensureColumn("nodes", "encrypted", "INTEGER NOT NULL DEFAULT 0");
 ensureColumn("chunks", "storage_id", "TEXT");
 ensureColumn("uploads", "storage_id", "TEXT");
 ensureColumn("uploads", "status", "TEXT NOT NULL DEFAULT 'active'");
 ensureColumn("uploads", "node_id", "TEXT");
 ensureColumn("uploads", "last_modified", "INTEGER");
 ensureColumn("uploads", "updated_at", "INTEGER");
+ensureColumn("uploads", "encrypted", "INTEGER NOT NULL DEFAULT 0");
+ensureColumn("shares", "expires_at", "INTEGER");
 q(`UPDATE uploads SET updated_at=created_at WHERE updated_at IS NULL`).run();
 q(`CREATE INDEX IF NOT EXISTS idx_nodes_owner_deleted ON nodes(owner_id,deleted_at)`).run();
+q(`CREATE INDEX IF NOT EXISTS idx_nodes_trash_root ON nodes(owner_id,trash_root_id)`).run();
 q(`CREATE INDEX IF NOT EXISTS idx_uploads_user_status ON uploads(user_id,status)`).run();
+q(`CREATE INDEX IF NOT EXISTS idx_shares_file ON shares(file_id)`).run();
+q(`CREATE INDEX IF NOT EXISTS idx_deletion_attempts ON deletion_queue(attempts,created_at)`).run();
 
 // Migration: pre-handle DBs stored email+name; handle = sanitized email
 // local part ("Tola.Wakga@x.com" -> "tola_wakga"), deduped on collision.
@@ -277,7 +291,7 @@ export function breadcrumb(id, ownerId) {
 
 export function children(parentId, ownerId) {
   return q(
-    `SELECT id,parent_id,name,type,size,mime,storage_id,created_at,updated_at
+    `SELECT id,parent_id,name,type,size,mime,storage_id,encrypted,created_at,updated_at
      FROM nodes WHERE parent_id=? AND owner_id=?
      AND deleted_at IS NULL
      ORDER BY type='folder' DESC, name COLLATE NOCASE`
@@ -324,14 +338,14 @@ export function ensureInboxFolder(ownerId, storageId) {
   return getNode(id);
 }
 
-export function createFileNode({ parentId, name, size, mime, ownerId, storageId, parts }) {
+export function createFileNode({ parentId, name, size, mime, ownerId, storageId, encrypted = 0, parts }) {
   const id = uid();
   const t = now();
   const tx = db.transaction(() => {
-    q(`INSERT INTO nodes(id,parent_id,name,type,size,mime,owner_id,storage_id,created_at,updated_at)
-       VALUES (?,?,?,?,?,?,?,?,?,?)`).run(
+    q(`INSERT INTO nodes(id,parent_id,name,type,size,mime,owner_id,storage_id,encrypted,created_at,updated_at)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?)`).run(
       id, parentId, uniqueName(parentId, name, ownerId), "file", size, mime || null,
-      ownerId || null, storageId || null, t, t
+      ownerId || null, storageId || null, encrypted ? 1 : 0, t, t
     );
     const ins = q(`INSERT INTO chunks(file_id,idx,msg_id,size,storage_id) VALUES (?,?,?,?,?)`);
     parts.forEach((p, i) => ins.run(id, i, p.msg_id, p.size, p.storage_id || storageId || null));
@@ -340,12 +354,25 @@ export function createFileNode({ parentId, name, size, mime, ownerId, storageId,
   return getNode(id);
 }
 
-export function createShare(fileId) {
+export function createShare(fileId, expiresAt = null) {
   const id = uid();
-  q(`INSERT INTO shares(id,file_id,created_at) VALUES (?,?,?)`).run(id, fileId, now());
+  q(`INSERT INTO shares(id,file_id,created_at,expires_at) VALUES (?,?,?,?)`).run(id, fileId, now(), expiresAt);
   return id;
 }
 
 export function getShare(shareId) {
   return q(`SELECT * FROM shares WHERE id=?`).get(shareId);
+}
+
+export function getNodeShares(fileId) {
+  return q(`SELECT id,file_id,created_at,expires_at FROM shares WHERE file_id=? ORDER BY created_at DESC`).all(fileId);
+}
+
+export function deleteShare(shareId, ownerId) {
+  const share = getShare(shareId);
+  if (!share) return false;
+  const node = getOwnedNode(share.file_id, ownerId, { allowRoot: false, includeDeleted: true });
+  if (!node) return false;
+  q(`DELETE FROM shares WHERE id=?`).run(shareId);
+  return true;
 }

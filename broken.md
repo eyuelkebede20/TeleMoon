@@ -25,10 +25,10 @@
 - [x] **Inline Error Rendering:** Catch API errors and display them within the UI context (e.g., inside the custom folder creation modal) using the `--danger` text color.
 
 ### Core Roadmap Items
-- [ ] **Client-side encryption:** Implement AES-GCM encryption per file (chunk-aligned so HTTP Range still works) using a passphrase, before uploading.
-- [x] **Share links:** Create signed, expiring share links for non-account friends to download files.
+- [x] **Client-side encryption:** Implement AES-GCM encryption per file (chunk-aligned so HTTP Range still works) using a passphrase, before uploading.
+- [x] **Share links:** Create signed, expiring share links for non-account friends to download files, with expiration durations and 1-click revocation.
 - [x] **Thumbnails:** Inline image previews for small images directly in the grid.
-- [ ] **Repair/Scan tool:** Create an admin tool to verify all chunk messages exist and re-index full channel history (`client.iterMessages`).
+- [x] **Repair/Scan tool:** Create an admin tool to verify all chunk messages exist, re-index channel history, and identify missing chunks.
 - [x] **User Isolation:** Implement per-user root folders, storage quotas, and a trash system with delayed purge.
-- [ ] **Resumable uploads:** Upgrade to tus-style resumable uploads across page reloads (the backend parts table already supports it, needs client persistence).
+- [x] **Resumable uploads:** Multi-part resumable uploads surviving page reloads with chunk offset tracking and retry logic.
 - [ ] **PWA & Backgrounding:** Add a service worker for background uploads and Progressive Web App support.

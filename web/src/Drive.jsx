@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { api, uploadFile } from "./api.js";
+import { decryptBlob } from "./crypto.js";
 import {
   Crescent, MoonProgress, iconFor, UploadIcon, PlusIcon, SearchIcon,
   DownloadIcon, TrashIcon, EditIcon, XIcon, LogoutIcon, ChevR, ShareIcon,
-  RestoreIcon, FolderIcon, MoveIcon,
+  RestoreIcon, FolderIcon, MoveIcon, LockIcon, ShieldIcon,
 } from "./icons.jsx";
 
 const fmtBytes = (n) => {
@@ -149,33 +150,249 @@ function ActionModal({ modal, onClose, onConfirm }) {
 }
 
 function ShareModal({ modal, onClose }) {
-  const [copied, setCopied] = useState(false);
-  const [copyError, setCopyError] = useState("");
-  const copy = async () => {
-    setCopyError("");
+  const [shares, setShares] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [expiry, setExpiry] = useState("null");
+  const [creating, setCreating] = useState(false);
+  const [copiedId, setCopiedId] = useState(null);
+  const [err, setErr] = useState("");
+
+  const loadShares = useCallback(() => {
+    api.nodeShares(modal.node.id)
+      .then(({ shares }) => setShares(shares))
+      .catch((e) => setErr(e.message))
+      .finally(() => setLoading(false));
+  }, [modal.node.id]);
+
+  useEffect(() => { loadShares(); }, [loadShares]);
+
+  const createNewShare = async () => {
+    setCreating(true); setErr("");
     try {
-      await navigator.clipboard.writeText(modal.url);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      setCopyError("Could not copy automatically. Select the link and copy it manually.");
+      const expHours = expiry === "null" ? null : Number(expiry);
+      await api.share(modal.node.id, expHours);
+      loadShares();
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setCreating(false);
     }
   };
+
+  const revoke = async (shareId) => {
+    try {
+      await api.revokeShare(shareId);
+      setShares((s) => s.filter((item) => item.id !== shareId));
+    } catch (e) {
+      setErr(e.message);
+    }
+  };
+
+  const copyUrl = async (shareId) => {
+    const url = `${window.location.origin}/api/share/${shareId}/content`;
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopiedId(shareId);
+      setTimeout(() => setCopiedId(null), 2000);
+    } catch {
+      setErr("Failed to copy link.");
+    }
+  };
+
   return (
-    <ModalShell title="Share link" onClose={onClose} className="share-modal">
-        <div className="modal-body modal-form-body">
-          <p className="modal-message share-message">
-            Anyone with this link can download "{modal.node.name}".
-          </p>
-          <div className="share-row">
-            <label className="sr-only" htmlFor="share-url">Share URL</label>
-            <input id="share-url" className="share-input" readOnly value={modal.url}
-              onFocus={e => e.target.select()} />
-            <button className="btn btn-moon" onClick={copy}>{copied ? "Copied!" : "Copy"}</button>
-          </div>
-          {copyError && <p className="auth-err share-error" role="alert">{copyError}</p>}
-          <span className="sr-only" aria-live="polite">{copied ? "Link copied" : ""}</span>
+    <ModalShell title="Share links" onClose={onClose} className="share-modal">
+      <div className="modal-body modal-form-body">
+        <p className="modal-message share-message">
+          Manage access links for “{modal.node.name}”.
+        </p>
+
+        <div className="share-create-row">
+          <label className="field-label flex-1">
+            Link Expiration
+            <select className="share-select" value={expiry} onChange={(e) => setExpiry(e.target.value)}>
+              <option value="1">1 Hour</option>
+              <option value="24">24 Hours (1 Day)</option>
+              <option value="168">7 Days</option>
+              <option value="720">30 Days</option>
+              <option value="null">No Expiration</option>
+            </select>
+          </label>
+          <button className="btn btn-moon share-create-btn" onClick={createNewShare} disabled={creating}>
+            {creating ? "Creating…" : "Generate Link"}
+          </button>
         </div>
+
+        {err && <p className="auth-err share-error" role="alert">{err}</p>}
+
+        <div className="share-list" aria-live="polite">
+          {loading && <p className="dim center">Loading shares…</p>}
+          {!loading && shares.length === 0 && (
+            <p className="dim center">No active share links. Generate one above.</p>
+          )}
+          {shares.map((s) => {
+            const isExpired = s.expires_at && s.expires_at <= Date.now();
+            const url = `${window.location.origin}/api/share/${s.id}/content`;
+            return (
+              <div key={s.id} className={`share-item ${isExpired ? "expired" : ""}`}>
+                <div className="share-item-info">
+                  <input className="share-input" readOnly value={url} onFocus={(e) => e.target.select()} />
+                  <span className="mono dim share-item-meta">
+                    {isExpired
+                      ? "Expired"
+                      : s.expires_at
+                        ? `Expires ${new Date(s.expires_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })}`
+                        : "Never expires"}
+                  </span>
+                </div>
+                <div className="share-item-actions">
+                  <button className="btn" onClick={() => copyUrl(s.id)} disabled={isExpired}>
+                    {copiedId === s.id ? "Copied!" : "Copy"}
+                  </button>
+                  <button className="ghost danger icon-btn" onClick={() => revoke(s.id)} aria-label="Revoke link">
+                    <TrashIcon />
+                  </button>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </ModalShell>
+  );
+}
+
+function ScanRepairModal({ onClose }) {
+  const [running, setRunning] = useState(true);
+  const [report, setReport] = useState(null);
+  const [err, setErr] = useState("");
+
+  const startScan = useCallback(() => {
+    setRunning(true); setErr(""); setReport(null);
+    api.scanChannel()
+      .then(setReport)
+      .catch((e) => setErr(e.message))
+      .finally(() => setRunning(false));
+  }, []);
+
+  useEffect(() => { startScan(); }, [startScan]);
+
+  return (
+    <ModalShell title="Channel Repair & Scan" onClose={onClose} className="scan-modal">
+      <div className="modal-body modal-form-body">
+        {running && (
+          <div className="center scan-running">
+            <Crescent />
+            <p className="dim">Scanning Telegram channel history and auditing chunk integrity…</p>
+          </div>
+        )}
+        {err && (
+          <div className="notice-box">
+            <p className="auth-err">Scan failed: {err}</p>
+            <button className="btn btn-moon" onClick={startScan}>Retry</button>
+          </div>
+        )}
+        {report && (
+          <div className="scan-results">
+            <div className="notice-box">
+              <p><b>Channel: {report.channelTitle}</b></p>
+              <p className="dim">Audited {report.totalChunksChecked} stored chunks.</p>
+            </div>
+
+            <div className="scan-stats-grid">
+              <div className="feature-box">
+                <h2>Missing Chunks</h2>
+                <p className={report.missingChunks.length ? "auth-err" : "dim"}>
+                  {report.missingChunks.length === 0 ? "0 (All chunks verified ✓)" : `${report.missingChunks.length} missing in Telegram`}
+                </p>
+              </div>
+              <div className="feature-box">
+                <h2>Indexed Files</h2>
+                <p className="dim">
+                  {report.newlyIndexedFiles.length === 0 ? "0 new files" : `+${report.newlyIndexedFiles.length} imported into Inbox`}
+                </p>
+              </div>
+            </div>
+
+            {report.missingChunks.length > 0 && (
+              <div className="scan-sublist">
+                <h3>Missing / Inaccessible Chunks</h3>
+                {report.missingChunks.map((c, i) => (
+                  <div key={i} className="scan-row auth-err">
+                    <span>{c.fileName} (part {c.partIndex + 1})</span>
+                    <span className="mono dim">msg {c.msgId}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {report.newlyIndexedFiles.length > 0 && (
+              <div className="scan-sublist">
+                <h3>Newly Indexed Telegram Files</h3>
+                {report.newlyIndexedFiles.map((f) => (
+                  <div key={f.id} className="scan-row">
+                    <span>{f.name}</span>
+                    <span className="mono dim">{fmtBytes(f.size)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            <div className="modal-actions">
+              <button className="btn" onClick={startScan}>Re-scan</button>
+              <button className="btn btn-moon" onClick={onClose}>Done</button>
+            </div>
+          </div>
+        )}
+      </div>
+    </ModalShell>
+  );
+}
+
+function DecryptModal({ node, onClose, onDecrypted }) {
+  const [passphrase, setPassphrase] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+  const inputRef = useRef(null);
+
+  useEffect(() => { inputRef.current?.focus(); }, []);
+
+  const submit = async (e) => {
+    e.preventDefault();
+    if (!passphrase) return;
+    setBusy(true); setErr("");
+    try {
+      const res = await fetch(api.fileUrl(node.id));
+      if (!res.ok) throw new Error("Could not download encrypted file");
+      const blob = await res.blob();
+      const decrypted = await decryptBlob(blob, passphrase);
+      onDecrypted(decrypted);
+    } catch (ex) {
+      setErr(ex.message.includes("operation failed") ? "Wrong passphrase or corrupted file" : ex.message);
+      setBusy(false);
+    }
+  };
+
+  return (
+    <ModalShell title={`Unlock “${node.name}”`} onClose={onClose} className="action-modal" initialFocusRef={inputRef}>
+      <div className="modal-body modal-form-body">
+        <form className="modal-form" onSubmit={submit}>
+          <p className="modal-message">
+            This file is protected with client-side AES-GCM encryption. Enter the passphrase to unlock it.
+          </p>
+          <label className="field-label">
+            Passphrase
+            <input ref={inputRef} type="password" value={passphrase} onChange={(e) => setPassphrase(e.target.value)}
+              placeholder="Enter passphrase" required />
+          </label>
+          {err && <p className="auth-err" role="alert">{err}</p>}
+          <div className="modal-actions">
+            <button type="button" className="btn" onClick={onClose}>Cancel</button>
+            <button type="submit" className="btn btn-moon" disabled={busy || !passphrase}>
+              {busy ? "Decrypting…" : "Unlock"}
+            </button>
+          </div>
+        </form>
+      </div>
     </ModalShell>
   );
 }
@@ -322,19 +539,27 @@ export default function Drive({ user, onLogout, onStorage }) {
     }).catch(() => {});
   }, []);
 
+  const [encryptNext, setEncryptNext] = useState(false);
+  const [encryptPassphrase, setEncryptPassphrase] = useState("");
+
   async function open(node) {
     if (trashMode) return;
     if (node.type === "folder") {
       setQ("");
       const { breadcrumb } = await api.children(node.id);
       setStack(breadcrumb);
-    } else setPreview(node);
+    } else if (node.encrypted === 1) {
+      setModal({ type: "decrypt", node });
+    } else {
+      setPreview(node);
+    }
   }
 
   const folderCache = useRef({});
 
   function enqueue(items, emptyFolders = []) {
     const parentId = cwd.id;
+    const currentPassphrase = encryptNext ? encryptPassphrase : "";
     
     // Process empty folders first
     if (emptyFolders.length > 0) {
@@ -363,7 +588,7 @@ export default function Drive({ user, onLogout, onStorage }) {
     for (const item of items) {
       const file = item.file || item;
       const key = `${Date.now()}_${file.name}_${Math.random()}`;
-      const handle = {};
+      const handle = { passphrase: currentPassphrase };
       setUploads((u) => [...u, { key, name: file.name, pct: 0, part: 0, parts: 1, status: "queued", handle, file }]);
       queue.current = queue.current.then(async () => {
         if (handle.cancelled) return;
@@ -393,7 +618,7 @@ export default function Drive({ user, onLogout, onStorage }) {
           await uploadFile(file, targetFolderId, ({ loaded, total, part, parts }) => {
             setUploads((u) => u.map((x) => x.key === key
               ? { ...x, pct: total ? (100 * loaded) / total : 100, part, parts } : x));
-          }, handle);
+          }, handle, null, currentPassphrase);
           setUploads((u) => u.map((x) => (x.key === key ? { ...x, pct: 100, status: "done" } : x)));
           refresh();
           setTimeout(() => setUploads((u) => u.filter((x) => x.key !== key)), 5000);
@@ -408,11 +633,11 @@ export default function Drive({ user, onLogout, onStorage }) {
   function continueUpload(item, file) {
     const expected = item.session;
     if (expected && (
-      file.name !== expected.name || file.size !== expected.size ||
+      file.name !== expected.name ||
       (expected.lastModified && file.lastModified !== expected.lastModified)
     )) {
       setUploads((all) => all.map((entry) => entry.key === item.key
-        ? { ...entry, status: "error", err: "Select the same file (name, size and modified date must match)." }
+        ? { ...entry, status: "error", err: "Select the same file (name and modified date must match)." }
         : entry));
       return;
     }
@@ -430,7 +655,7 @@ export default function Drive({ user, onLogout, onStorage }) {
             setUploads((all) => all.map((entry) => entry.key === item.key
               ? { ...entry, pct: total ? (100 * loaded) / total : 100, part, parts, session }
               : entry));
-          }, item.handle, session);
+          }, item.handle, session, item.handle.passphrase || "");
         }
         setUploads((all) => all.map((entry) => entry.key === item.key
           ? { ...entry, pct: 100, status: "done" } : entry));
@@ -468,12 +693,8 @@ export default function Drive({ user, onLogout, onStorage }) {
     try { await api.restore(node.id); refresh(); }
     catch (e) { setError(e.message); }
   }
-  async function share(node) {
-    try {
-      const { shareId } = await api.share(node.id);
-      const url = `${window.location.origin}/api/share/${shareId}/content`;
-      setModal({ type: "share", url, node });
-    } catch (e) { setError(`Could not create a share link — ${e.message}`); }
+  function share(node) {
+    setModal({ type: "share", node });
   }
 
   /* OS file drop vs internal row drag */
@@ -556,6 +777,17 @@ export default function Drive({ user, onLogout, onStorage }) {
             </>
           ) : (
             <>
+              <label className="topbar-encrypt-toggle" title="Encrypt uploads with AES-GCM before sending to Telegram">
+                <input type="checkbox" checked={encryptNext} onChange={(e) => {
+                  setEncryptNext(e.target.checked);
+                  if (e.target.checked && !encryptPassphrase) {
+                    const pass = window.prompt("Enter an encryption passphrase for new uploads:");
+                    if (pass) setEncryptPassphrase(pass);
+                    else setEncryptNext(false);
+                  }
+                }} />
+                <LockIcon /> <span>Encrypt</span>
+              </label>
               <button className="btn" onClick={mkdir}><PlusIcon /> New folder</button>
               <button className="btn" onClick={() => folderInput.current.click()}><UploadIcon /> Folder</button>
               <input ref={folderInput} type="file" multiple webkitdirectory="true" hidden
@@ -608,8 +840,11 @@ export default function Drive({ user, onLogout, onStorage }) {
               const Icon = iconFor(n);
               const cardContent = (
                 <>
+                  {n.encrypted === 1 && (
+                    <span className="card-lock-badge" title="Encrypted"><LockIcon /></span>
+                  )}
                   <div className="card-ico">
-                    {!trashMode && n.type === "file" && n.mime?.startsWith("image/") && n.size < 1024 * 1024 ? (
+                    {!trashMode && n.type === "file" && !n.encrypted && n.mime?.startsWith("image/") && n.size < 1024 * 1024 ? (
                       <img className="card-thumb" src={api.fileUrl(n.id)} alt="" loading="lazy"
                         decoding="async" width="320" height="180" />
                     ) : (
@@ -665,6 +900,9 @@ export default function Drive({ user, onLogout, onStorage }) {
         {status?.telegram === "connected"
           ? <>Linked to <b>{status.channel}</b> · parts of {fmtBytes(status.chunkBytes)}</>
           : <>Storage offline{status?.error ? ` — ${status.error}` : ""}</>}
+        <button className="ghost storage-link" onClick={() => setModal({ type: "scan" })}>
+          <ShieldIcon /> Repair & Scan
+        </button>
         {onStorage && <button className="ghost storage-link" onClick={onStorage}>Storage…</button>}
       </footer>
 
@@ -693,8 +931,16 @@ export default function Drive({ user, onLogout, onStorage }) {
         </aside>
       )}
 
-      {modal && modal.type === "share" ? (
+      {modal?.type === "share" ? (
         <ShareModal modal={modal} onClose={() => setModal(null)} />
+      ) : modal?.type === "scan" ? (
+        <ScanRepairModal onClose={() => { setModal(null); refresh(); }} />
+      ) : modal?.type === "decrypt" ? (
+        <DecryptModal node={modal.node} onClose={() => setModal(null)} onDecrypted={(blob) => {
+          const url = URL.createObjectURL(blob);
+          setModal(null);
+          setPreview({ ...modal.node, decryptedUrl: url });
+        }} />
       ) : modal?.type === "move" ? (
         <MoveModal node={modal.node} onClose={() => setModal(null)} onMoved={() => {
           setModal(null);
@@ -721,22 +967,26 @@ export default function Drive({ user, onLogout, onStorage }) {
       ) : null}
 
       {preview && (
-        <ModalShell title={preview.name} onClose={() => setPreview(null)} className="preview-modal"
+        <ModalShell title={preview.name} onClose={() => {
+          if (preview.decryptedUrl) URL.revokeObjectURL(preview.decryptedUrl);
+          setPreview(null);
+        }} className="preview-modal"
           headerActions={(
-            <a className="btn" href={api.fileUrl(preview.id, true)}><DownloadIcon /> Download</a>
+            <a className="btn" href={preview.decryptedUrl || api.fileUrl(preview.id, true)}
+              download={preview.name}><DownloadIcon /> Download</a>
           )}>
             <div className="modal-body">
               {preview.mime?.startsWith("image/") && (
-                <img src={api.fileUrl(preview.id)} alt={preview.name} />
+                <img src={preview.decryptedUrl || api.fileUrl(preview.id)} alt={preview.name} />
               )}
               {preview.mime?.startsWith("video/") && (
-                <video src={api.fileUrl(preview.id)} controls />
+                <video src={preview.decryptedUrl || api.fileUrl(preview.id)} controls />
               )}
               {preview.mime?.startsWith("audio/") && (
-                <audio src={api.fileUrl(preview.id)} controls />
+                <audio src={preview.decryptedUrl || api.fileUrl(preview.id)} controls />
               )}
               {preview.mime === "application/pdf" && (
-                <iframe src={api.fileUrl(preview.id)} title={preview.name} />
+                <iframe src={preview.decryptedUrl || api.fileUrl(preview.id)} title={preview.name} />
               )}
               {!previewable(preview) && (
                 <p className="dim center">
