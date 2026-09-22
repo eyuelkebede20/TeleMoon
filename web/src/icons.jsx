@@ -86,6 +86,9 @@ export const LinkIcon = (p) => (
 export const UsersIcon = (p) => (
   <S {...p}><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20a6.5 6.5 0 0 1 13 0" /><path d="M16 5a3.5 3.5 0 0 1 0 6.6M15.5 14a6.5 6.5 0 0 1 6 6" /></S>
 );
+export const MegaphoneIcon = (p) => (
+  <S {...p}><path d="M11 4a2 2 0 0 1 2 2v1a2 2 0 0 1-2 2h-4l-3 4V4h7z"/><path d="M13 5v4l5 2V3l-5 2z"/></S>
+);
 export const LockIcon = (p) => (
   <S {...p}><rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></S>
 );
