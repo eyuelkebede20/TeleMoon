@@ -64,7 +64,7 @@ Browser authentication uses an HttpOnly, SameSite=Strict session cookie so media
 ## Ops runbook
 
 - **Boot without TG env** → API runs, storage endpoints 503, `/status.error` says why. UI lands on the Connect screen with an explainer.
-- **No channel paired** → Connect screen creates a 10-minute `TM-PAIR-…` code. Add the configured bot/account to the private channel and post that exact code; the event handler activates an immutable `storage_connections` row for that user.
+- **No channel paired** → Connect screen: paste invite link/@name/-100 id, or pick a dialog. Bot-mode fallback: add the bot to your channel as admin, then paste the channel @name or copy `[setup] channel id` from server logs.
 - **Session churn**: bot re-auths each boot; to pin, copy the logged `TG_SESSION=` into env.
 - **FLOOD_WAIT**: GramJS auto-sleeps on short waits. Symptom of hammering: parallel transfers stall — transfers are deliberately serialized client-side.
 - **Message deleted in Telegram by hand** → download 502 for that chunk. No repair tool yet (roadmap).

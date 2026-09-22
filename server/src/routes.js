@@ -172,17 +172,28 @@ api.post("/auth/logout", (_req, res) => {
 
 /* ------------------------------------------------------- storage pairing */
 
-api.post("/tg/pair", auth, (req, res) => {
-  if (!tg.ready) return bad(res, 503, tg.error || "Telegram is offline");
-  const code = newPairingCode();
-  const id = uid();
-  const expiresAt = now() + 10 * 60 * 1000;
-  db.transaction(() => {
-    q(`DELETE FROM pairing_codes WHERE user_id=? OR expires_at<=?`).run(req.user.id, now());
-    q(`INSERT INTO pairing_codes(id,user_id,code_hash,expires_at,created_at) VALUES (?,?,?,?,?)`)
-      .run(id, req.user.id, hashPairingCode(code), expiresAt, now());
-  })();
-  res.status(201).json({ id, code, expiresAt });
+api.get("/tg/dialogs", auth, async (req, res) => {
+  try {
+    const dialogs = await require("./telegram.js").listDialogs();
+    res.json({ dialogs });
+  } catch (e) {
+    bad(res, e.status || 400, e.message);
+  }
+});
+
+api.post("/tg/connect", auth, async (req, res) => {
+  const { link } = req.body || {};
+  if (!link) return bad(res, 400, "link required");
+  try {
+    const channel = await require("./telegram.js").connectByLink(link);
+    const storage = getActiveStorage(req.user.id);
+    // If they had an old one, activateStorage handles archiving it
+    const newStorage = activateStorage(req.user.id, channel.id.toString(), channel.title || "Telegram channel");
+    tg.channels.set(newStorage.id, channel);
+    res.json({ ok: true, channel: channel.title || "channel" });
+  } catch (e) {
+    bad(res, e.status || 400, e.message);
+  }
 });
 
 /* ------------------------------------------------------ virtual filesystem */

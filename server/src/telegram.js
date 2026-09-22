@@ -82,34 +82,55 @@ async function channelForStorage(storageId) {
   return entity;
 }
 
+export async function connectByLink(raw) {
+  if (!tg.client) throw err(tg.error || "Telegram offline", 503);
+  if (/^https?:\/\/(t\.me|telegram\.me)\/\+/.test(raw)) {
+    if (tg.mode === "bot")
+      throw err(
+        "bot mode cannot join via invite link — add the bot to the channel as admin manually, then provide the channel @name or -100... id"
+      );
+    const invite = raw.match(/\+([A-Za-z0-9_-]+)/);
+    if (!invite) throw err("invalid invite link");
+    const hash = invite[1];
+    try {
+      const upd = await tg.client.invoke(new Api.messages.ImportChatInvite({ hash }));
+      return upd.chats?.[0]; // return channel entity
+    } catch (e) {
+      if (/ALREADY_PARTICIPANT/.test(e.errorMessage || e.message || "")) {
+        const info = await tg.client.invoke(new Api.messages.CheckChatInvite({ hash }));
+        if (info.chat) return info.chat;
+      }
+      if (/INVITE_HASH/.test(e.errorMessage || "")) throw err("that invite link is invalid or expired");
+      throw e;
+    }
+  }
+
+  const uname = raw.match(/(?:t\.me|telegram\.me)\/([A-Za-z]\w{3,})\/?$/)?.[1];
+  const entity = await tg.client.getEntity(uname ? `@${uname}` : raw);
+  return entity;
+}
+
+export async function listDialogs() {
+  if (!tg.client) throw err(tg.error || "Telegram offline", 503);
+  if (tg.mode === "bot")
+    throw err("browsing your chats needs a user session (npm run login) — bots can't list dialogs");
+  const dialogs = await tg.client.getDialogs({ limit: 200 });
+  return dialogs
+    .filter((d) => d.entity?.className === "Channel")
+    .map((d) => ({
+      id: `-100${d.entity.id.toString()}`,
+      title: d.entity.title,
+      username: d.entity.username || null,
+      group: !!d.entity.megagroup,
+    }));
+}
+
 export async function handleChannelPost(ev) {
   try {
     const m = ev.message;
     const cid = m?.peerId?.channelId;
     if (!cid) return;
     const channelId = telegramChannelId(cid);
-    const messageText = normalizePairingCode(m.message || "");
-
-    if (/^TM-PAIR-[A-F0-9]{12}$/.test(messageText)) {
-      const pairing = q(
-        `SELECT * FROM pairing_codes WHERE code_hash=? AND expires_at>?`
-      ).get(hashPairingCode(messageText), now());
-      if (!pairing) return;
-      const entity = await tg.client.getEntity(m.peerId);
-      try {
-        const storage = activateStorage(pairing.user_id, channelId, entity.title || "Telegram channel");
-        tg.channels.set(storage.id, entity);
-        q(`DELETE FROM pairing_codes WHERE user_id=?`).run(pairing.user_id);
-        await tg.client.sendMessage(entity, {
-          message: "TeleMoon connected. New uploads for this account will be stored in this channel.",
-        });
-        console.log(`[pairing] @${pairing.user_id} -> ${channelId}`);
-      } catch (pairingError) {
-        console.warn(`[pairing] ${pairingError.message}`);
-        await tg.client.sendMessage(entity, { message: `TeleMoon could not connect: ${pairingError.message}` });
-      }
-      return;
-    }
 
     const storage = getStorageByChannel(channelId);
     if (!storage) return;

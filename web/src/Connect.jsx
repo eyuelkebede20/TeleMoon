@@ -1,52 +1,37 @@
 import { useEffect, useState } from "react";
 import { api } from "./api.js";
-import { Crescent } from "./icons.jsx";
+import { Crescent, LinkIcon, MegaphoneIcon, UsersIcon } from "./icons.jsx";
 
-export default function Connect({ status, canSkip, user, onDone, onLogout }) {
-  const [pairing, setPairing] = useState(null);
+// Link a storage channel: paste a private t.me/+â€¦ link (user session joins it),
+// an @name, or a -100â€¦ id â€” or pick from channels this account already has.
+export default function Connect({ status, canSkip, onDone, onLogout }) {
+  const [link, setLink] = useState("");
   const [busy, setBusy] = useState(false);
-  const [copied, setCopied] = useState(false);
   const [err, setErr] = useState("");
-  const offline = status.telegram === "offline";
+  const [dialogs, setDialogs] = useState(null);
+  const [dlgErr, setDlgErr] = useState("");
+  const offline = !status.mode; // no Telegram client at all
 
   useEffect(() => {
-    if (!offline) return;
-    const timer = setInterval(() => {
-      api.status().then((next) => { if (next.telegram !== "offline") onDone(); }).catch(() => {});
-    }, 4000);
-    return () => clearInterval(timer);
-  }, [offline, onDone]);
+    if (offline) return;
+    api.dialogs()
+      .then((d) => setDialogs(d.dialogs))
+      .catch((e) => setDlgErr(e.message));
+  }, [offline]);
 
-  useEffect(() => {
-    if (!pairing) return;
-    const initialStorageId = status.storageId;
-    const initialStorageUpdatedAt = status.storageUpdatedAt || 0;
-    const timer = setInterval(() => {
-      api.status().then((next) => {
-        if (next.telegram === "connected" && (
-          next.storageId !== initialStorageId || next.storageUpdatedAt > initialStorageUpdatedAt
-        )) onDone();
-      }).catch(() => {});
-    }, 2000);
-    return () => clearInterval(timer);
-  }, [pairing, status.storageId, status.storageUpdatedAt, onDone]);
-
-  async function beginPairing() {
+  async function connect(ref) {
     setBusy(true); setErr("");
-    try { setPairing(await api.createPairing()); }
-    catch (error) { setErr(error.message); }
-    finally { setBusy(false); }
-  }
-
-  async function copyCode() {
-    setErr("");
     try {
-      await navigator.clipboard.writeText(pairing.code);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1800);
-    } catch {
-      setErr("Could not copy automatically. Select the code and copy it manually.");
+      await api.saveChannel(ref);
+      
+      // Update local storage so the UI knows they have a channel
+      const u = savedUser.get();
+      if (u) savedUser.set({ ...u, channel_id: ref });
+      
+      onDone();
     }
+    catch (e) { setErr(e.message); }
+    finally { setBusy(false); }
   }
 
   return (
@@ -60,57 +45,74 @@ export default function Connect({ status, canSkip, user, onDone, onLogout }) {
       </div>
 
       <div className="connect-hero">
-        <h1>{canSkip ? "Connect a new channel" : "Connect your storage"}</h1>
+        <h1>Link your storage</h1>
         <p className="dim">
           {canSkip
-            ? <>New uploads currently go to <b>{status.channel}</b>. Pairing another channel will not affect files already stored there.</>
-            : "Pair a private Telegram channel that only you control. TeleMoon will store your file chunks there."}
+            ? <>Currently linked to <b>{status.channel}</b>. Switching doesnâ€™t move files already stored there.</>
+            : "Point TeleMoon at a private Telegram channel â€” thatâ€™s where your files will live."}
         </p>
 
         {offline ? (
           <div className="notice-box">
-            <p><b>Telegram is offline on this TeleMoon server.</b></p>
+            <p><b>Telegram is offline on the server.</b></p>
             <p className="dim">{status.error}</p>
-            {user?.role === "owner" ? (
-              <p className="dim">
-                Configure TG_API_ID, TG_API_HASH, and TG_BOT_TOKEN or TG_SESSION on the server, then restart it.
-              </p>
-            ) : (
-              <p className="dim">Ask the deployment owner to restore the Telegram connection.</p>
-            )}
-          </div>
-        ) : !pairing ? (
-          <div className="pair-start">
-            <div className="notice-box">
-              <p><b>Your channel remains yours.</b></p>
-              <p className="dim">The pairing code proves this account can post in the selected channel. It expires after ten minutes and works once.</p>
-            </div>
-            <button className="btn btn-moon" disabled={busy} onClick={beginPairing}>
-              {busy ? "Creating code…" : canSkip ? "Pair another channel" : "Create pairing code"}
-            </button>
+            <p className="dim">
+              Fill <span className="mono">server/.env</span> (TG_API_ID, TG_API_HASH, and a bot token
+              or user session via <span className="mono">npm run login</span>) and restart, then come back here.
+            </p>
           </div>
         ) : (
-          <div className="pair-flow">
-            <ol>
-              <li>Create or open your private Telegram channel.</li>
-              <li>
-                {status.mode === "bot"
-                  ? "Add the TeleMoon bot as a channel administrator."
-                  : "Add the Telegram account configured for this TeleMoon server as a channel administrator."}
-              </li>
-              <li>Send the exact code below as a message in that channel.</li>
-            </ol>
-            <button className="pair-code mono" onClick={copyCode} title="Copy pairing code">
-              {pairing.code}
+          <form className="linkbox" onSubmit={(e) => { e.preventDefault(); connect(link); }}>
+            <LinkIcon />
+            <input
+              value={link}
+              onChange={(e) => setLink(e.target.value)}
+              placeholder="https://t.me/+â€¦  Â·  @channel  Â·  -100â€¦"
+              spellCheck={false} autoFocus
+            />
+            <button className="btn btn-moon" disabled={busy || !link.trim()}>
+              {busy ? "Linkingâ€¦" : "Connect"}
             </button>
-            <p className="dim pair-wait" aria-live="polite">
-              {copied ? "Copied." : `Waiting for the Telegram message… Expires at ${new Date(pairing.expiresAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}.`}
-            </p>
-            <button className="ghost" onClick={beginPairing} disabled={busy}>Generate a new code</button>
-          </div>
+          </form>
         )}
         {err && <p className="auth-err" role="alert">{err}</p>}
       </div>
+
+      {!offline && (
+        <section className="dialogs">
+          <h2>Your channels &amp; groups</h2>
+          {dialogs === null && !dlgErr && <p className="dim">Looking through your skyâ€¦</p>}
+          {dlgErr && (
+            <div className="notice-box">
+              <p className="dim">{dlgErr}</p>
+              {status.mode === "bot" && (
+                <p className="dim">
+                  Bot mode can still connect: add the bot to your channel as admin, then paste the
+                  channelâ€™s <span className="mono">@name</span> â€” or post any message in the channel and
+                  copy the <span className="mono">[setup] channel id</span> from the server logs.
+                </p>
+              )}
+            </div>
+          )}
+          {dialogs && dialogs.length === 0 && <p className="dim">No channels or groups on this account yet.</p>}
+          {dialogs && dialogs.length > 0 && (
+            <div className="cards">
+              {dialogs.map((d) => (
+                <button key={d.id} disabled={busy}
+                  className={`card pick ${d.current ? "current" : ""}`}
+                  onClick={() => connect(d.id)} title={d.title}>
+                  <div className="card-ico">{d.group ? <UsersIcon /> : <MegaphoneIcon />}</div>
+                  <div className="card-name">{d.title}</div>
+                  <div className="card-meta mono dim">
+                    {d.username ? `@${d.username}` : "private"} Â· {d.group ? "group" : "channel"}
+                    {d.current ? " Â· linked" : ""}
+                  </div>
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
+      )}
     </div>
   );
 }
