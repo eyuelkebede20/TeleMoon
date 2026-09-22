@@ -20,14 +20,14 @@ app.use((_req, res, next) => {
   res.set("Content-Security-Policy", [
     "default-src 'self'",
     "base-uri 'self'",
-    "connect-src 'self'",
+    "connect-src 'self' https://cloudflareinsights.com",
     "font-src 'self' https://fonts.gstatic.com data:",
     "frame-ancestors 'none'",
     "frame-src 'self'",
     "img-src 'self' data: blob:",
     "media-src 'self' blob:",
     "object-src 'none'",
-    "script-src 'self'",
+    "script-src 'self' https://static.cloudflareinsights.com",
     "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   ].join("; "));
   next();
