@@ -11,7 +11,7 @@ import { cfg } from "./config.js";
 import {
   db, q, now, uid, getNode, getOwnedNode, breadcrumb, children, subtreeIds,
   isAncestor, uniqueName, createFileNode, createShare, getShare, getNodeShares,
-  deleteShare, claimLegacyNodes, getActiveStorage, claimLegacyStorage,
+  deleteShare, claimLegacyNodes, getActiveStorage, claimLegacyStorage, activateStorage,
 } from "./db.js";
 import { sign, auth } from "./auth.js";
 import {
@@ -57,7 +57,6 @@ const uploadSummary = (upload) => {
     mime: upload.mime,
     parentId: upload.parent_id,
     chunkSize: upload.chunk_size,
-    encrypted: upload.encrypted ? 1 : 0,
     lastModified: upload.last_modified,
     createdAt: upload.created_at,
     updatedAt: upload.updated_at,
@@ -67,19 +66,12 @@ const uploadSummary = (upload) => {
 };
 
 // A small in-process guard is enough for a single TeleMoon instance and avoids
-// allowing password guessing at network speed. Expired keys are periodically
-// pruned to avoid memory leaks.
+// allowing password guessing at network speed. A reverse proxy can add a
+// distributed limiter when the app is scaled horizontally.
 const authAttempts = new Map();
 function authRateLimit(req, res, next) {
   const key = req.ip || req.socket.remoteAddress || "unknown";
   const time = now();
-
-  if (authAttempts.size > 200) {
-    for (const [ip, entry] of authAttempts.entries()) {
-      if (entry.resetAt <= time) authAttempts.delete(ip);
-    }
-  }
-
   const prior = authAttempts.get(key);
   const entry = !prior || prior.resetAt <= time
     ? { count: 0, resetAt: time + 15 * 60 * 1000 }
@@ -177,6 +169,7 @@ api.get("/tg/dialogs", auth, async (req, res) => {
     const dialogs = await require("./telegram.js").listDialogs();
     res.json({ dialogs });
   } catch (e) {
+    console.error("[tg/dialogs error]", e);
     bad(res, e.status || 400, e.message);
   }
 });
@@ -192,6 +185,7 @@ api.post("/tg/connect", auth, async (req, res) => {
     tg.channels.set(newStorage.id, channel);
     res.json({ ok: true, channel: channel.title || "channel" });
   } catch (e) {
+    console.error("[tg/connect error]", e);
     bad(res, e.status || 400, e.message);
   }
 });

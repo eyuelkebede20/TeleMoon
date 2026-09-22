@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "./api.js";
+import { api, savedUser } from "./api.js";
 import { Crescent, LinkIcon, MegaphoneIcon, UsersIcon } from "./icons.jsx";
 
 // Link a storage channel: paste a private t.me/+â€¦ link (user session joins it),
