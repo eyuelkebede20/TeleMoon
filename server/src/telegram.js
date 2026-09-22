@@ -62,7 +62,7 @@ export async function initTelegram() {
   drainDeletionQueue().catch((error) => console.warn("[tg] deletion queue:", error.message));
 }
 
-const telegramChannelId = (entityOrId) => {
+export const telegramChannelId = (entityOrId) => {
   const source = entityOrId && entityOrId.id !== undefined ? entityOrId.id : entityOrId;
   const raw = String(source?.toString?.() ?? source);
   return raw.startsWith("-100") ? raw : `-100${raw.replace(/^-/, "")}`;

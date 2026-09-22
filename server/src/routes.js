@@ -185,10 +185,10 @@ api.post("/tg/connect", auth, async (req, res) => {
   const { link } = req.body || {};
   if (!link) return bad(res, 400, "link required");
   try {
-    const channel = await require("./telegram.js").connectByLink(link);
+    const tglib = require("./telegram.js");
+    const channel = await tglib.connectByLink(link);
     const storage = getActiveStorage(req.user.id);
-    // If they had an old one, activateStorage handles archiving it
-    const newStorage = activateStorage(req.user.id, channel.id.toString(), channel.title || "Telegram channel");
+    const newStorage = activateStorage(req.user.id, tglib.telegramChannelId(channel), channel.title || "Telegram channel");
     tg.channels.set(newStorage.id, channel);
     res.json({ ok: true, channel: channel.title || "channel" });
   } catch (e) {
