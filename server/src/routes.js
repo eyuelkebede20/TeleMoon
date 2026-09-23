@@ -28,7 +28,7 @@ const publicUser = (user) => ({ id: user.id, handle: user.handle, role: user.rol
 // reverse proxies, or shared caches.
 api.use((req, res, next) => {
   if (
-    req.path === "/status" || req.path.startsWith("/auth/") || req.path === "/tg/pair" ||
+    req.path === "/status" || req.path.startsWith("/auth/")  ||
     req.path.startsWith("/uploads") || req.path.startsWith("/trash")
   )
     res.set("Cache-Control", "no-store");
