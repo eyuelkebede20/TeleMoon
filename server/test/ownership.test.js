@@ -8,7 +8,6 @@ import request from "supertest";
 const testDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "telemoon-ownership-"));
 process.env.DATA_DIR = testDataDir;
 process.env.JWT_SECRET = "ownership-test-secret-that-is-not-used-in-production";
-process.env.INVITE_CODE = "";
 process.env.NODE_ENV = "test";
 
 const { app } = await import("../src/app.js");

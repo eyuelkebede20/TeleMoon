@@ -14,7 +14,6 @@ export const cfg = {
   dataDir: process.env.DATA_DIR || "./data",
   jwtSecret,
   secureCookies: production,
-  inviteCode: process.env.INVITE_CODE || "",
   corsOrigins: String(process.env.CORS_ORIGINS || "")
     .split(",")
     .map((origin) => origin.trim())

@@ -31,10 +31,10 @@ Browser (React/Vite, web/) ── JSON /api ──► Express (server/src)
 
 ```
 GET  /health                                   public liveness only
-GET  /public-status                            public account count + inviteRequired
+GET  /public-status                            public account count + 
 GET  /status                                   authenticated user's active channel + mode + chunkBytes
-POST /auth/enter {handle,password,invite?}     one door: known @handle signs in, new one is claimed
-                                               (invite only if INVITE_CODE set & users>0)
+POST /auth/enter {handle,password}     one door: known @handle signs in, new one is claimed
+                                               
 GET  /auth/me                                  current server-side id, handle and role
 POST /tg/pair                                  one-time 10-minute channel pairing code
 GET  /nodes/:id/children                       {folder,breadcrumb,children}; id 'root'
@@ -59,7 +59,7 @@ Browser authentication uses an HttpOnly, SameSite=Strict session cookie so media
 
 ## Env
 
-`TG_API_ID` `TG_API_HASH` `TG_BOT_TOKEN` (bot mode) | `TG_SESSION` (user mode via `npm run login`, premium → 4 GB) · `TG_CHANNEL_ID` (legacy owner seed only) · `PORT` `DATA_DIR` `JWT_SECRET` `INVITE_CODE` (optional; empty = open handle claiming) `CORS_ORIGINS` (optional) `CHUNK_MB` (≤1900).
+`TG_API_ID` `TG_API_HASH` `TG_BOT_TOKEN` (bot mode) | `TG_SESSION` (user mode via `npm run login`, premium → 4 GB) · `TG_CHANNEL_ID` (legacy owner seed only) · `PORT` `DATA_DIR` `JWT_SECRET` `CORS_ORIGINS` (optional) `CHUNK_MB` (≤1900).
 
 ## Ops runbook
 
@@ -81,7 +81,7 @@ Ink `#0E1220` / panel `#171C30` / line `#262D4A` / text `#E9ECFA` / muted `#9099
 - 2026-09-15 Per-user drives and per-user Telegram channels. Pairing is proven by posting a single-use code in the channel. The first account remains deployment owner for server administration; legacy files and the old global channel are migrated to it.
 - 2026-09-15 Normal delete replaced by recoverable per-user Trash. Permanent deletion uses a durable Telegram deletion queue so outages cannot silently orphan cleanup work.
 - 2026-07-19 Indexer ingests only `document` media (photos sent as photos lack filenames; "send as File" to index).
-- 2026-07-19 No-signup auth: single `/auth/enter` with Telegram-style `@handle` + password; unknown handle = claimed on the spot (INVITE_CODE optional gate). Email/name dropped; old DBs migrate handle = email local part.
+- 2026-07-19 No-signup auth: single `/auth/enter` with Telegram-style `@handle` + password; unknown handle = claimed on the spot . Email/name dropped; old DBs migrate handle = email local part.
 - 2026-09-15 Direct channel-id/link entry replaced by proof-of-access pairing codes. Codes are random, stored only as hashes, expire after ten minutes and are consumed after a successful channel post.
 - 2026-09-15 Upload manifests survive reloads, stored parts are reused, network failures preserve progress, completion is idempotent, and cancellation is explicit.
 - 2026-07-19 Drive UI switched from table rows to card grid ("simple boxes"); `design-principle.md` added as the design contract for all pages.

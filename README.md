@@ -14,7 +14,7 @@ Talks **MTProto** (GramJS) — not the Bot HTTP API, which caps transfers at 20/
    npm run dev:server        # terminal 1
    npm run dev:web           # terminal 2 → http://localhost:5173
    ```
-4. **Enter** — type any `@handle` + password. The first account becomes the deployment owner; later accounts are isolated members (set `INVITE_CODE` to gate strangers).
+4. **Enter** — type any `@handle` + password. The first account becomes the deployment owner; later accounts are isolated members.
 5. **Pair storage in the app** — each account creates a one-time code, adds the configured bot/account to its private channel, and posts the code there. The code expires after ten minutes. Every account gets an isolated drive and channel.
 
 Interrupted uploads keep their completed Telegram parts. After a refresh, TeleMoon shows the pending upload and asks you to reselect the same local file before continuing. Normal deletion moves items to Trash; only permanent deletion removes metadata and queues the Telegram messages for retry-safe removal.

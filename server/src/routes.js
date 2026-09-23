@@ -92,7 +92,6 @@ api.get("/health", (_req, res) => res.json({ ok: true }));
 api.get("/public-status", (_req, res) => {
   res.json({
     users: q(`SELECT COUNT(*) c FROM users`).get().c,
-    inviteRequired: !!cfg.inviteCode,
   });
 });
 
@@ -107,7 +106,6 @@ api.get("/status", auth, (req, res) => {
     error: tg.ready ? null : tg.error,
     chunkBytes: cfg.chunkBytes,
     users: q(`SELECT COUNT(*) c FROM users`).get().c,
-    inviteRequired: !!cfg.inviteCode,
     canManageStorage: true,
   });
 });
@@ -134,8 +132,6 @@ api.post("/auth/enter", authRateLimit, async (req, res) => {
   }
 
   const count = q(`SELECT COUNT(*) c FROM users`).get().c;
-  if (count > 0 && cfg.inviteCode && invite !== cfg.inviteCode)
-    return bad(res, 403, `@${handle} is new here — invite code required`);
   const u = {
     id: uid(), handle, pass_hash: await bcrypt.hash(password, 12),
     role: count === 0 ? "owner" : "member", created_at: now(),
@@ -166,7 +162,8 @@ api.post("/auth/logout", (_req, res) => {
 
 api.get("/tg/dialogs", auth, async (req, res) => {
   try {
-    const dialogs = await require("./telegram.js").listDialogs();
+    const { listDialogs } = await import("./telegram.js");
+    const dialogs = await listDialogs();
     res.json({ dialogs });
   } catch (e) {
     console.error("[tg/dialogs error]", e);
@@ -178,7 +175,7 @@ api.post("/tg/connect", auth, async (req, res) => {
   const { link } = req.body || {};
   if (!link) return bad(res, 400, "link required");
   try {
-    const tglib = require("./telegram.js");
+    const tglib = await import("./telegram.js");
     const channel = await tglib.connectByLink(link);
     const storage = getActiveStorage(req.user.id);
     const newStorage = activateStorage(req.user.id, tglib.telegramChannelId(channel), channel.title || "Telegram channel");

@@ -63,7 +63,7 @@ The moon/night metaphor is used sparingly, in microcopy only.
 **Landing / Enter (Auth)** — a quiet product promise and three compact feature
 boxes beside one sign-in box. On narrow screens the form comes before the
 feature details, so it remains immediately visible: `@handle` + password, one
-gold button, and the invite field only when the server requires it. No tabs, no
+gold button. No tabs, no
 second auth mode, no competing call to action.
 
 **Link storage (Connect)** — one hero box with the paste-a-link input and one
