@@ -76,18 +76,21 @@ export default function Auth({ onAuth }) {
           </p>
         </form>
 
-        <div className="landing-features" aria-label="TeleMoon features">
+        <div className="landing-features" aria-label="How it works">
+          <div style={{ gridColumn: "1 / -1" }}>
+            <h2 style={{ fontSize: "1.1rem", margin: "0 0 4px", letterSpacing: "-0.01em" }}>How to get started:</h2>
+          </div>
           <article className="feature-box">
-            <h2>Bring your channel</h2>
-            <p>Connect a private Telegram channel in a few guided steps.</p>
+            <h2>1. Sign Up</h2>
+            <p>Enter a new handle and password to instantly create your account.</p>
           </article>
           <article className="feature-box">
-            <h2>Keep big files</h2>
-            <p>Large uploads are split safely and put back together on download.</p>
+            <h2>2. Add the Bot</h2>
+            <p>Create a private Telegram channel and add the TeleMoon bot as an admin.</p>
           </article>
           <article className="feature-box">
-            <h2>Use it like a drive</h2>
-            <p>Folders, previews, search, sharing, and a recoverable trash.</p>
+            <h2>3. Link & Upload</h2>
+            <p>Paste a message link from your channel to pair it, and start uploading!</p>
           </article>
         </div>
       </section>

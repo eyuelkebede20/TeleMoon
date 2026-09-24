@@ -80,39 +80,47 @@ export default function Connect({ status, canSkip, onDone, onLogout }) {
 
       {!offline && (
         <section className="dialogs">
-          <h2>Your channels &amp; groups</h2>
-          {dialogs === null && !dlgErr && <p className="dim">Looking through your skyâ€¦</p>}
-          {dlgErr && (
-            <div className="notice-box">
-              <p className="dim">{dlgErr}</p>
-              {status.mode === "bot" && (
-                <p className="dim">
-                  Bot mode can still connect: add the bot to your channel as admin, then paste the
-                  channelâ€™s <span className="mono">@name</span> â€” or 
-                  right-click any message in the channel, select <strong>Copy Post Link</strong>, and paste it here!
-                </p>
+          {status.mode === "bot" ? (
+            <div className="notice-box" style={{ textAlign: "left" }}>
+              <h2 style={{ margin: "0 0 10px", fontSize: "1.1rem" }}>How to link your channel:</h2>
+              <ol style={{ margin: 0, paddingLeft: "24px", lineHeight: 1.6, color: "var(--muted)" }}>
+                <li>Open Telegram and create a new private channel.</li>
+                <li>Add your Bot as an Administrator.</li>
+                <li>Post a message in the channel, right-click it, and select <strong>Copy Post Link</strong>.</li>
+                <li>Paste the link into the box above and click Connect!</li>
+              </ol>
+            </div>
+          ) : (
+            <>
+              <h2>Your channels &amp; groups</h2>
+              {dialogs === null && !dlgErr && <p className="dim">Looking through your sky...</p>}
+              {dlgErr && (
+                <div className="notice-box">
+                  <p className="dim">{dlgErr}</p>
+                </div>
               )}
-            </div>
-          )}
-          {dialogs && dialogs.length === 0 && <p className="dim">No channels or groups on this account yet.</p>}
-          {dialogs && dialogs.length > 0 && (
-            <div className="cards">
-              {dialogs.map((d) => (
-                <button key={d.id} disabled={busy}
-                  className={`card pick ${d.current ? "current" : ""}`}
-                  onClick={() => connect(d.id)} title={d.title}>
-                  <div className="card-ico">{d.group ? <UsersIcon /> : <MegaphoneIcon />}</div>
-                  <div className="card-name">{d.title}</div>
-                  <div className="card-meta mono dim">
-                    {d.username ? `@${d.username}` : "private"} Â· {d.group ? "group" : "channel"}
-                    {d.current ? " Â· linked" : ""}
-                  </div>
-                </button>
-              ))}
-            </div>
+              {dialogs && dialogs.length === 0 && <p className="dim">No channels or groups on this account yet.</p>}
+              {dialogs && dialogs.length > 0 && (
+                <div className="cards">
+                  {dialogs.map((d) => (
+                    <button key={d.id} disabled={busy}
+                      className={`card pick ${d.current ? "current" : ""}`}
+                      onClick={() => connect(d.id)} title={d.title}>
+                      <div className="card-ico">{d.group ? <UsersIcon /> : <MegaphoneIcon />}</div>
+                      <div className="card-name">{d.title}</div>
+                      <div className="card-meta mono dim">
+                        {d.username ? `@${d.username}` : "private"} &middot; {d.group ? "group" : "channel"}
+                        {d.current ? " &middot; linked" : ""}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </>
           )}
         </section>
       )}
     </div>
   );
 }
+
