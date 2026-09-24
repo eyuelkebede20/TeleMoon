@@ -6,6 +6,7 @@ import {
   DownloadIcon, TrashIcon, EditIcon, XIcon, LogoutIcon, ChevR, ShareIcon,
   RestoreIcon, FolderIcon, MoveIcon, LockIcon, ShieldIcon,
 } from "./icons.jsx";
+import { VoxideAssistant, VoxideTelemetryBadge } from "./VoxideAssistant.jsx";
 
 const fmtBytes = (n) => {
   if (n === 0) return "0 B";
@@ -793,6 +794,27 @@ export default function Drive({ user, onLogout, onStorage }) {
   const previewable = (n) =>
     /^image\/|^video\/|^audio\/|^application\/pdf$/.test(n.mime || "");
 
+  const driveContext = {
+    stack,
+    setStack,
+    cwd,
+    items,
+    q,
+    setQ,
+    trashMode,
+    setTrashMode,
+    encryptUploads: encryptNext,
+    setEncryptUploads: setEncryptNext,
+    status,
+    setModal,
+    onOpenFolder: (folder) => setStack((s) => [...s, folder]),
+    createFolder: (name) => api.mkdir(cwd.id, name).then(() => refresh()),
+    trashNode: async (node) => {
+      await api.del(node.id);
+      refresh();
+    },
+  };
+
   return (
     <div className="app"
       onDragOver={(e) => { if (isOsDrag(e)) { e.preventDefault(); setDragOver(true); } }}
@@ -976,11 +998,14 @@ export default function Drive({ user, onLogout, onStorage }) {
         {status?.telegram === "connected"
           ? <><span>MTPROTO ONLINE</span> · Channel: <b>{status.channel}</b> · Chunk: {fmtBytes(status.chunkBytes)}</>
           : <><span>MTPROTO OFFLINE</span>{status?.error ? `: ${status.error}` : ""}</>}
+        <VoxideTelemetryBadge />
         <button className="ghost storage-link" onClick={() => setModal({ type: "scan" })}>
           <ShieldIcon /> Repair &amp; Scan
         </button>
         {onStorage && <button className="ghost storage-link" onClick={onStorage}>Storage</button>}
       </footer>
+
+      <VoxideAssistant driveContext={driveContext} />
 
       {uploads.length > 0 && (
         <aside className="uppanel" aria-label="Uploads" aria-live="polite">

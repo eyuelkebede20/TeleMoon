@@ -1692,6 +1692,96 @@ kbd, .kbd {
   border-top: 1px solid var(--line);
 }
 
+/* ---------- Voxide Voice Assistant & Telemetry ---------- */
+:root {
+  /* Voxide Brand Colors */
+  --vox-orange: #FF6600;
+  --vox-orange-hover: #FF7A1A;
+  --vox-orange-active: #E65C00;
+  --vox-orange-bg: rgba(255, 102, 0, 0.14);
+  --vox-orange-border: rgba(255, 102, 0, 0.38);
+  --vox-orange-glow: rgba(255, 102, 0, 0.5);
+  --vox-slate-base: #090D14;
+  --vox-slate-surface: #0E1420;
+  --vox-slate-border: rgba(255, 255, 255, 0.12);
+  --vox-slate-text: #F3F4F6;
+  --vox-slate-muted: #9CA3AF;
+}
+
+/* Voxide Statusbar HUD trigger */
+.voxide-hud {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 10px;
+  background: var(--vox-slate-surface);
+  border: 1px solid var(--vox-orange-border);
+  color: var(--vox-slate-text);
+  font-family: var(--mono);
+  font-size: 0.74rem;
+  letter-spacing: 0.04em;
+  transition: all 0.15s ease;
+  user-select: none;
+  cursor: pointer;
+}
+
+.voxide-hud:hover {
+  border-color: var(--vox-orange);
+  background: #141c2c;
+  box-shadow: 0 0 10px var(--vox-orange-bg);
+  color: #FFFFFF;
+}
+
+.voxide-hud-active {
+  border-color: var(--vox-orange);
+  background: var(--vox-orange-bg);
+}
+
+.voxide-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 1px 6px;
+  background: var(--vox-orange-bg);
+  border: 1px solid var(--vox-orange);
+  color: var(--vox-orange);
+  font-weight: 700;
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.voxide-pulse {
+  width: 6px;
+  height: 6px;
+  background: var(--vox-orange);
+  box-shadow: 0 0 8px var(--vox-orange-glow);
+  display: inline-block;
+  animation: voxPulse 1.6s infinite alternate;
+}
+
+@keyframes voxPulse {
+  0% { opacity: 0.4; transform: scale(0.9); }
+  100% { opacity: 1; transform: scale(1.25); }
+}
+
+.voxide-state-tag {
+  color: var(--vox-slate-muted);
+  text-transform: uppercase;
+  font-size: 0.68rem;
+}
+
+.voxide-host {
+  position: relative;
+  z-index: 100;
+}
+
+/* Force sharp corners on Voxide widget elements to preserve design principles */
+div[data-voxide-widget],
+div[data-voxide-widget] * {
+  border-radius: 0 !important;
+}
+
 /* ---------- Drop Veil ---------- */
 .dropveil {
   position: fixed;
