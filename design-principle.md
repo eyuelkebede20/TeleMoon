@@ -4,79 +4,51 @@ The single source of truth for how TeleMoon looks and feels. Every page and ever
 new component is checked against this file before it ships. Tokens live in
 `web/src/styles.css` `:root` and are referenced here by name.
 
-## 1. The scene: a quiet night sky
+## 1. Aesthetic: Dark Modernist Sharp Grid
 
-The app is a dark indigo sky (`--ink`) with faint stars. Content never floats on
-the sky directly — it lives in **boxes**. The sky is scenery, not surface.
+Inspired by modern AI platform dark UI grids:
+- **Unboxed Typography**: Content breathes directly on the canvas without wrapping every heading or bullet in nested container cards. Headings, descriptions, and feature lists sit directly on the background separated by clean hairline rules.
+- **Zero Border Radius**: Every element has sharp 90-degree corners (`border-radius: 0 !important`). Buttons, cards, inputs, tags, modals, avatars, indicators, and dialogs are strict rectangles.
+- **Clean Solid Canvas (No Grid)**: No grid lines or artificial mesh overlays. Deep, solid navy slate background.
+- **ColorHunt Palette Theme** (`#dddddd`, `#516c8d`, `#28385e`, `#304163`):
+  - Primary Base Background: `#28385e` (`--ch-base`) and `#1f2c4a` (`--ch-base-deep`).
+  - Elevated Surfaces & Cards: `#304163` (`--ch-surface`) and `#384b72` (`--ch-surface-raised`).
+  - Accent / Primary Action: `#516c8d` (`--ch-steel`) with `#5e7d9f` hover and `#455d7a` active.
+  - Primary Typography & Highlights: `#dddddd` (`--ch-light`) and `#cfd8e3`.
+  - Secondary Accent & Monospace Digits: `#7ea3cc`.
+  - Functional Status: Green (`#5ec788`), Amber (`#e5ad58`), Red (`#e86b6b`).
+- **Hairlines**: High-precision `1px solid rgba(221, 221, 221, 0.12)` borders with steel blue hover highlights.
 
-## 2. Everything is a box
+## 2. Two-Sided Split Landing & Authentication
 
-One container idiom everywhere: `--panel` (or `--panel-2`) background,
-1px `--line` border, radius 12–18px. Auth is a box. A channel you can pick is a
-box. A file is a box. A preview is a box. If a new feature needs a surface, it
-gets this box — not a new style.
+The entry screen uses a split architecture:
+- **Ambient Flying Plane Canvas**: Clean solid slate canvas (`#28385e` to `#1c2742`) with floating fluid droplets and a prominent, 3D-faceted flying Telegram paper airplane gliding smoothly with glowing wingtip contrail particles. Bottom wave animation removed for a clean, minimal editorial backdrop. Respects `prefers-reduced-motion`.
+- **Left Side (Editorial Canvas)**: Unboxed brand header, primary headline, plain prose overview, and a numbered feature list (`01`, `02`, `03`) directly over subtle translucent backdrop blur.
+- **Right Side (Auth Panel)**: Sharp rectangular auth container with tabbed switching between **Sign In** and **Sign Up**, set against a frosted glass backdrop.
+  - Sign In mode: Handle and password.
+  - Sign Up mode: Handle, password, password confirmation, and optional invite code when enabled by the host.
+- **Mobile Adaptability**: Single column layout below 860px viewport width.
 
-- Hover: border brightens to `--line-strong` / `--moon-deep`. No lifts, no shadows
-  except overlays (upload panel, modal).
-- Boxes align to a grid with 12–16px gaps. Padding steps: 8 / 12 / 16 / 24 / 32.
+## 3. Minimalist Controls (Button Discipline)
 
-## 3. One accent, spent carefully
+- **Remove Redundant Actions**: If a button is not strictly necessary, remove it.
+  - No redundant "Sign in" nav link on the sign-in screen.
+  - Simplified card action bars to keep only essential actions.
+  - Unboxed setup steps with clean numbered list instead of nested alert boxes.
 
-- **Moon gold (`--moon`)** = the one primary action per screen (`.btn-moon`),
-  the brand crescent, folder icons, and signature moments (MoonProgress).
-  If two things on a screen are gold-filled, one of them is wrong.
-- **Sky blue (`--sky`)** = links only.
-- Everything else: `--text` on panels, `--muted` for secondary, `--danger` only
-  for destructive/error.
+## 4. Voice: Stop Slop & Plain Technical Prose
 
-## 4. Type
+All text adheres to the `stop-slop` standard:
+- **No Filler & Throat Clearing**: Cut announcement phrases ("Here is what", "It turns out", "Let me be clear"). State points directly.
+- **No Em Dashes**: No em dashes (—) anywhere in UI copy. Use periods or commas.
+- **No Adverbs**: Cut empty -ly words ("safely", "directly", "simply", "genuinely", "actually").
+- **No Marketing Puffery**: Cut buzzwords ("High-performance", "Zero cloud subscription fees", "Unleash", "Elevate"). Write plain, human sentences.
+- **Active Voice & Human Subjects**: Every sentence names the actor or addresses the user directly ("You").
 
-- **Space Grotesk** for UI: names, buttons, headings. Headings 1.4–1.6rem,
-  weight 700, tight letter-spacing (−0.02em). Body 0.9–0.95rem.
-- **JetBrains Mono** for data: sizes, dates, ids, `@handles`, error details.
-  Always 0.78–0.85rem, usually `--muted`.
-- Never more than two sizes of heading on a screen.
+## 5. Typographic Hierarchy
 
-## 5. Motion
-
-- Transitions ≤ 150ms, opacity / color / border only. Nothing moves position.
-- `prefers-reduced-motion` kills everything.
-- The **MoonProgress waxing moon** is the only playful element in the app.
-  It stays. Nothing else animates for fun.
-
-## 6. States
-
-- **Loading / empty**: centered, `--muted`, one quiet line ("Reading the sky…",
-  "This folder is empty…"). No spinners.
-- **Errors**: `--danger` text *inside the box they belong to*, never a browser
-  alert for flow errors. Plain language, say what to do next.
-- **Focus**: 2px `--moon` outline, always visible for keyboard users.
-
-## 7. Words
-
-Short, warm, lowercase-calm. "Enter", "Link storage", "stored ✓". No jargon on
-screen (no "MTProto", no "session string") — jargon goes in tooltips or docs.
-The moon/night metaphor is used sparingly, in microcopy only.
-
-## 8. Per-page checklists
-
-**Landing / Enter (Auth)** — a quiet product promise and three compact feature
-boxes beside one sign-in box. On narrow screens the form comes before the
-feature details, so it remains immediately visible: `@handle` + password, one
-gold button. No tabs, no
-second auth mode, no competing call to action.
-
-**Link storage (Connect)** — one hero box with the paste-a-link input and one
-gold Connect button. Below, the user's channels/groups as a grid of simple
-boxes (title, `@name` or "private", channel/group tag); the current one is
-gold-bordered. Guidance (bot mode, offline) replaces the grid as a quiet box,
-never a wall of text.
-
-**Drive** — sticky topbar (brand, search pill, New folder, gold Upload,
-avatar). Breadcrumbs under it. Content is a responsive grid of file/folder
-boxes: icon, name (one line, ellipsis), mono meta line, actions appear on
-hover/focus in a reserved footer and remain visible on touch devices. On narrow
-screens, search comes before creation and upload controls. Moving always has an explicit
-folder picker; drag-and-drop is only a desktop shortcut. Statusbar pinned
-bottom: connection dot, channel name, storage link. Uploads panel bottom-right
-with MoonProgress rows.
+- **Playfair Display & Cormorant Garamond**: High-contrast, luxurious editorial serifs with delicate ball terminals and dramatic italic accents for primary headlines (`h1`, `h2`) and feature titles.
+- **Cinzel**: Chiseled luxury Roman display typography with uppercase tracking for the brand logotype (`TeleMoon`), section tags, tabs, and primary action buttons.
+- **Geist Sans**: Clean sans-serif for interface descriptions, form inputs, and navigation.
+- **Geist Mono / JetBrains Mono**: Monospace font for file sizes, dates, keystroke shortcuts, and technical identifiers.
+- Keystrokes use sharp `<kbd>` tags with 0px radius.
