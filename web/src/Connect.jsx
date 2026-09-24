@@ -67,7 +67,7 @@ export default function Connect({ status, canSkip, onDone, onLogout }) {
             <input
               value={link}
               onChange={(e) => setLink(e.target.value)}
-              placeholder="https://t.me/+â€¦  Â·  @channel  Â·  -100â€¦"
+              placeholder="https://t.me/c/123/45  ·  @channel  ·  -100…"
               spellCheck={false} autoFocus
             />
             <button className="btn btn-moon" disabled={busy || !link.trim()}>
@@ -88,8 +88,8 @@ export default function Connect({ status, canSkip, onDone, onLogout }) {
               {status.mode === "bot" && (
                 <p className="dim">
                   Bot mode can still connect: add the bot to your channel as admin, then paste the
-                  channelâ€™s <span className="mono">@name</span> â€” or post any message in the channel and
-                  copy the <span className="mono">[setup] channel id</span> from the server logs.
+                  channelâ€™s <span className="mono">@name</span> â€” or 
+                  right-click any message in the channel, select <strong>Copy Post Link</strong>, and paste it here!
                 </p>
               )}
             </div>

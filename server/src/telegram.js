@@ -105,6 +105,11 @@ export async function connectByLink(raw) {
     }
   }
 
+  const pvtMsg = raw.match(/(?:t\.me|telegram\.me)\/c\/(\d+)\//);
+  if (pvtMsg) {
+    return await tg.client.getEntity(bigInt("-100" + pvtMsg[1]));
+  }
+
   const uname = raw.match(/(?:t\.me|telegram\.me)\/([A-Za-z]\w{3,})\/?$/)?.[1];
   const entity = await tg.client.getEntity(uname ? `@${uname}` : raw);
   return entity;

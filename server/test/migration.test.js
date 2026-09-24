@@ -47,9 +47,9 @@ legacy.exec(`
 `);
 legacy.close();
 
-const { q } = await import("../src/db.js");
+const { db, q } = await import("../src/db.js");
 
-after(() => fs.rmSync(testDataDir, { recursive: true, force: true }));
+after(() => { db.close(); fs.rmSync(testDataDir, { recursive: true, force: true }); });
 
 test("legacy installations assign the oldest user as owner", () => {
   const user = q(`SELECT role FROM users WHERE id='legacy-user'`).get();

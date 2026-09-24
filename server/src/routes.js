@@ -59,7 +59,7 @@ const uploadSummary = (upload) => {
     chunkSize: upload.chunk_size,
     lastModified: upload.last_modified,
     createdAt: upload.created_at,
-    updatedAt: upload.updated_at,
+    updatedAt: upload.updated_at, encrypted: upload.encrypted,
     parts,
     uploadedBytes: parts.reduce((sum, part) => sum + part.size, 0),
   };

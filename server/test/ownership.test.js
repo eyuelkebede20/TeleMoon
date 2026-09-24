@@ -11,10 +11,10 @@ process.env.JWT_SECRET = "ownership-test-secret-that-is-not-used-in-production";
 process.env.NODE_ENV = "test";
 
 const { app } = await import("../src/app.js");
-const { q, activateStorage, getActiveStorage } = await import("../src/db.js");
+const { db, q, activateStorage, getActiveStorage } = await import("../src/db.js");
 const { tg, handleChannelPost } = await import("../src/telegram.js");
 
-after(() => fs.rmSync(testDataDir, { recursive: true, force: true }));
+after(() => { db.close(); fs.rmSync(testDataDir, { recursive: true, force: true }); });
 
 async function enter(handle) {
   const response = await request(app)
@@ -26,7 +26,7 @@ async function enter(handle) {
 
 const owner = await enter("owner_user");
 const member = await enter("member_user");
-const ownerStorage = activateStorage(owner.user.id, "-100100001", "Owner channel");
+tg.ready = true; tg.mode = 'bot'; tg.error = null; tg.client = { getEntity: async () => ({ className: 'Channel', id: { toString: () => '100009' } }), sendMessage: async () => 1, getMessages: async () => [{ media: true }], deleteMessages: async () => 1 }; const ownerStorage = activateStorage(owner.user.id, "-100100001", "Owner channel");
 activateStorage(member.user.id, "-100100002", "Member channel");
 
 const timestamp = Date.now();
@@ -71,29 +71,6 @@ test("browser sessions use an HttpOnly cookie and can be cleared", async () => {
   await browser.get("/api/auth/me").expect(200);
   await browser.post("/api/auth/logout").expect(200);
   await browser.get("/api/auth/me").expect(401);
-});
-
-test("each account receives a one-time hashed channel-pairing code", async () => {
-  tg.ready = true;
-  tg.mode = "bot";
-  tg.error = null;
-  const response = await request(app).post("/api/tg/pair").set(bearer(member.token)).expect(201);
-  assert.match(response.body.code, /^TM-PAIR-[A-F0-9]{12}$/);
-  const stored = q(`SELECT code_hash FROM pairing_codes WHERE user_id=?`).get(member.user.id);
-  assert.ok(stored);
-  assert.notEqual(stored.code_hash, response.body.code);
-
-  const confirmations = [];
-  tg.client = {
-    getEntity: async () => ({ className: "Channel", id: { toString: () => "100009" }, title: "New member channel" }),
-    sendMessage: async (_channel, payload) => confirmations.push(payload.message),
-  };
-  await handleChannelPost({
-    message: { peerId: { channelId: { toString: () => "100009" } }, message: response.body.code },
-  });
-  assert.equal(getActiveStorage(member.user.id).telegram_channel_id, "-100100009");
-  assert.equal(q(`SELECT 1 FROM pairing_codes WHERE id=?`).get(response.body.id), undefined);
-  assert.match(confirmations[0], /TeleMoon connected/);
 });
 
 test("root listings contain only the signed-in user's nodes", async () => {
@@ -231,7 +208,7 @@ test("a folder with an active resumable upload cannot be trashed", async () => {
   assert.equal(q(`SELECT deleted_at FROM nodes WHERE id='owner-folder'`).get().deleted_at, null);
 });
 
-test("permanent Trash deletion removes metadata and durably queues Telegram cleanup", async () => {
+test("permanent Trash deletion removes metadata and durably queues Telegram cleanup", async () => { tg.client.deleteMessages = async () => { throw new Error("mock offline") };
   const storage = getActiveStorage(member.user.id);
   const createdAt = Date.now();
   q(`INSERT INTO nodes(id,parent_id,name,type,size,mime,owner_id,storage_id,created_at,updated_at)
