@@ -34,11 +34,22 @@ export async function initTelegram() {
   }
 
   const client = new TelegramClient(
-    new StringSession(cfg.session || ""),
+    new sessionsMod.StoreSession(cfg.dataDir),
     cfg.apiId,
     cfg.apiHash,
     { connectionRetries: 5 }
   );
+
+  await client.session.load();
+
+  // Load the env session string if we have a fresh StoreSession
+  if (cfg.session && !client.session.authKey) {
+    const temp = new StringSession(cfg.session);
+    await temp.load();
+    client.session.setDC(temp.dcId, temp.serverAddress, temp.port);
+    client.session.authKey = temp.authKey;
+  }
+
 
   if (cfg.botToken) {
     await client.start({ botAuthToken: cfg.botToken });
@@ -50,9 +61,13 @@ export async function initTelegram() {
   tg.client = client;
   tg.ready = true;
   tg.error = null;
+  const exportSession = new StringSession("");
+  exportSession.setDC(client.session.dcId, client.session.serverAddress, client.session.port);
+  exportSession.authKey = client.session.authKey;
+
   console.log(
     `[tg] connected (${tg.mode}). Tip: set TG_SESSION to reuse this session:\n` +
-      `TG_SESSION=${client.session.save()}`
+      `TG_SESSION=${exportSession.save()}`
   );
 
   // One handler completes channel pairing and indexes documents posted
@@ -111,8 +126,15 @@ export async function connectByLink(raw) {
   }
 
   const uname = raw.match(/(?:t\.me|telegram\.me)\/([A-Za-z]\w{3,})\/?$/)?.[1];
-  const entity = await tg.client.getEntity(uname ? `@${uname}` : raw);
-  return entity;
+  try {
+    const entity = await tg.client.getEntity(uname ? `@${uname}` : raw);
+    return entity;
+  } catch (e) {
+    if (e.message && e.message.includes("Could not find the input entity")) {
+      throw err("Telegram doesn't recognize this channel. If you just added the bot, please forward any message from the channel to the bot so it can register it, then try again.");
+    }
+    throw e;
+  }
 }
 
 export async function listDialogs() {
