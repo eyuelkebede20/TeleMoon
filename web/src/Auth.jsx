@@ -39,7 +39,7 @@ export default function Auth({ onAuth }) {
 
       <section className="landing-hero" id="top">
         <div className="landing-copy">
-          <h1>A calm, private drive<br />built on Telegram.</h1>
+          <h1>Free &amp; secure<br />cloud storage.</h1>
           <p className="landing-lede">
             Organize, preview, and download your files from a familiar drive—while the
             actual bytes live in a private Telegram channel you control.
