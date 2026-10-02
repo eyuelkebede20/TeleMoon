@@ -31,4 +31,4 @@
 - [x] **Repair/Scan tool:** Create an admin tool to verify all chunk messages exist, re-index channel history, and identify missing chunks.
 - [x] **User Isolation:** Implement per-user root folders, storage quotas, and a trash system with delayed purge.
 - [x] **Resumable uploads:** Multi-part resumable uploads surviving page reloads with chunk offset tracking and retry logic.
-- [ ] **PWA & Backgrounding:** Add a service worker for background uploads and Progressive Web App support.
+- [x] **PWA & Backgrounding:** Add a service worker for background uploads and Progressive Web App support.

@@ -303,3 +303,27 @@ test("channel scan endpoint audits storage and returns report", async () => {
   assert.ok(Array.isArray(response.body.newlyIndexedFiles));
 });
 
+test("renaming a node to its current name does not change the name", async () => {
+  const patchRes = await request(app)
+    .patch("/api/nodes/member-folder")
+    .set(bearer(member.token))
+    .send({ name: "Member folder" })
+    .expect(200);
+  assert.equal(patchRes.body.name, "Member folder");
+});
+
+test("search results include encrypted flag", async () => {
+  const searchRes = await request(app)
+    .get("/api/search?q=secret")
+    .set(bearer(member.token))
+    .expect(200);
+  assert.equal(searchRes.body.results.length, 1);
+  assert.equal(searchRes.body.results[0].encrypted, 1);
+});
+
+test("CSP header includes voxide connect endpoints", async () => {
+  const res = await request(app).get("/api/health").expect(200);
+  assert.match(res.headers["content-security-policy"], /https:\/\/voxide\.onrender\.com/);
+  assert.match(res.headers["content-security-policy"], /wss:\/\/voxide\.onrender\.com/);
+});
+

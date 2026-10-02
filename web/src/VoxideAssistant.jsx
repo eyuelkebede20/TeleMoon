@@ -85,6 +85,7 @@ export function VoxideAssistant({ driveContext }) {
         description: "Navigate one level up in the folder tree.",
         params: {},
         handler: () => {
+          ctxRef.current?.setQ?.("");
           const stack = ctxRef.current?.stack || [];
           if (stack.length > 1) {
             ctxRef.current?.setStack?.(stack.slice(0, stack.length - 1));
@@ -97,6 +98,7 @@ export function VoxideAssistant({ driveContext }) {
         description: "Navigate back to the top-level root directory.",
         params: {},
         handler: () => {
+          ctxRef.current?.setQ?.("");
           ctxRef.current?.setTrashMode?.(false);
           const root = ctxRef.current?.stack?.[0];
           if (root) {

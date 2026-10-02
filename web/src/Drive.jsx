@@ -804,10 +804,20 @@ export default function Drive({ user, onLogout, onStorage }) {
     trashMode,
     setTrashMode,
     encryptUploads: encryptNext,
-    setEncryptUploads: setEncryptNext,
+    setEncryptUploads: (val) => {
+      if (val && !encryptPassphrase) {
+        setModal({ type: "encryptPassphrase" });
+      } else {
+        setEncryptNext(val);
+      }
+    },
+    encryptPassphrase,
     status,
     setModal,
-    onOpenFolder: (folder) => setStack((s) => [...s, folder]),
+    onOpenFolder: (folder) => {
+      setQ("");
+      setStack((s) => [...s, folder]);
+    },
     createFolder: (name) => api.mkdir(cwd.id, name).then(() => refresh()),
     trashNode: async (node) => {
       await api.del(node.id);
