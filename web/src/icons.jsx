@@ -1,51 +1,51 @@
-const S = ({ children, ...p }) => (
+const S = ({ children, strokeWidth = 2, ...p }) => (
   <svg viewBox="0 0 24 24" width="18" height="18" fill="none"
-    stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"
-    strokeLinejoin="round" aria-hidden="true" {...p}>{children}</svg>
+    stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="square"
+    strokeLinejoin="miter" aria-hidden="true" {...p}>{children}</svg>
 );
 
-export const Crescent = (p) => (
-  <svg viewBox="0 0 32 32" width="26" height="26" aria-hidden="true" {...p}>
-    <path d="M22 4a12 12 0 1 0 6 22A14 14 0 0 1 22 4z" fill="var(--moon)" />
+export const Crescent = ({ size = 22, ...p }) => (
+  <svg viewBox="0 0 32 32" width={size} height={size} aria-hidden="true" {...p}>
+    <defs>
+      <linearGradient id="chBrandGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+        <stop offset="0%" stopColor="#DDDDDD" />
+        <stop offset="100%" stopColor="#7EA3CC" />
+      </linearGradient>
+    </defs>
+    <path d="M22 4a12 12 0 1 0 6 22A14 14 0 0 1 22 4z" fill="url(#chBrandGrad)" />
   </svg>
 );
 
-/** The signature: an upload's progress rendered as a waxing moon. */
+/** Utilitarian rectangular progress gauge in steel blue. */
 export function MoonProgress({ pct = 0, size = 26 }) {
-  const r = 10, c = 12;
   const progress = Math.min(Math.max(pct, 0), 100);
-  const x = c - r + (2 * r * progress) / 100; // terminator sweeps left→right
   return (
-    <svg viewBox="0 0 24 24" width={size} height={size} role="progressbar"
+    <svg viewBox="0 0 24 12" width={size} height={12} role="progressbar"
       aria-label="Upload progress" aria-valuemin="0" aria-valuemax="100"
-      aria-valuenow={Math.round(progress)}>
-      <defs>
-        <clipPath id={`mp${size}`}><circle cx={c} cy={c} r={r} /></clipPath>
-      </defs>
-      <circle cx={c} cy={c} r={r} fill="none" stroke="var(--line-strong)" strokeWidth="1.4" />
-      <rect x={c - r} y={c - r} width={Math.max(x - (c - r), 0)} height={2 * r}
-        fill="var(--moon)" clipPath={`url(#mp${size})`} />
+      aria-valuenow={Math.round(progress)} style={{ flexShrink: 0 }}>
+      <rect x="0.5" y="0.5" width="23" height="11" fill="var(--bg-deep)" stroke="var(--line-strong)" strokeWidth="1" />
+      <rect x="2" y="2" width={(20 * progress) / 100} height="8" fill="var(--ch-steel)" />
     </svg>
   );
 }
 
 export const FolderIcon = (p) => (
-  <S {...p}><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" /></S>
+  <S {...p}><path d="M3 7h6l2 2h10v10H3z" /><path d="M3 7v12" /></S>
 );
 export const FileIcon = (p) => (
-  <S {...p}><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /></S>
+  <S {...p}><path d="M14 3H5v18h14V8z" /><path d="M14 3v5h5" /></S>
 );
 export const ImgIcon = (p) => (
-  <S {...p}><rect x="3" y="5" width="18" height="14" rx="2" /><circle cx="8.5" cy="10" r="1.5" /><path d="m21 17-5-5-4 4-2-2-5 5" /></S>
+  <S {...p}><rect x="3" y="5" width="18" height="14" /><circle cx="8.5" cy="10" r="1.5" /><path d="m21 17-5-5-4 4-2-2-5 5" /></S>
 );
 export const VidIcon = (p) => (
-  <S {...p}><rect x="3" y="5" width="18" height="14" rx="2" /><path d="m10 9 5 3-5 3z" /></S>
+  <S {...p}><rect x="3" y="5" width="18" height="14" /><path d="m10 9 5 3-5 3z" /></S>
 );
 export const MusicIcon = (p) => (
   <S {...p}><path d="M9 18V6l10-2v12" /><circle cx="6.5" cy="18" r="2.5" /><circle cx="16.5" cy="16" r="2.5" /></S>
 );
 export const ZipIcon = (p) => (
-  <S {...p}><rect x="4" y="3" width="16" height="18" rx="2" /><path d="M12 3v2m0 2v2m0 2v2" /></S>
+  <S {...p}><rect x="4" y="3" width="16" height="18" /><path d="M12 3v2m0 2v2m0 2v2" /></S>
 );
 export const CodeIcon = (p) => (
   <S {...p}><path d="m8 8-4 4 4 4M16 8l4 4-4 4" /></S>
@@ -90,7 +90,7 @@ export const MegaphoneIcon = (p) => (
   <S {...p}><path d="M11 4a2 2 0 0 1 2 2v1a2 2 0 0 1-2 2h-4l-3 4V4h7z"/><path d="M13 5v4l5 2V3l-5 2z"/></S>
 );
 export const LockIcon = (p) => (
-  <S {...p}><rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></S>
+  <S {...p}><rect x="3" y="11" width="18" height="11" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></S>
 );
 export const ShieldIcon = (p) => (
   <S {...p}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></S>

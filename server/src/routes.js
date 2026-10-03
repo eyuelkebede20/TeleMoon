@@ -219,14 +219,16 @@ api.patch("/nodes/:id", auth, (req, res) => {
     if (node.type === "folder" && isAncestor(node.id, target.id, req.user.id))
       return bad(res, 400, "cannot move a folder into itself");
     q(`UPDATE nodes SET parent_id=?, name=?, updated_at=? WHERE id=?`)
-      .run(target.id, uniqueName(target.id, node.name, req.user.id), now(), node.id);
+      .run(target.id, uniqueName(target.id, node.name, req.user.id, node.id), now(), node.id);
   }
   if (name !== undefined) {
     const clean = cleanName(name);
     if (!clean) return bad(res, 400, "name required");
     const fresh = getNode(node.id);
-    q(`UPDATE nodes SET name=?, updated_at=? WHERE id=?`)
-      .run(uniqueName(fresh.parent_id, clean, req.user.id), now(), node.id);
+    if (clean !== fresh.name) {
+      q(`UPDATE nodes SET name=?, updated_at=? WHERE id=?`)
+        .run(uniqueName(fresh.parent_id, clean, req.user.id, node.id), now(), node.id);
+    }
   }
   res.json(getNode(node.id));
 });
@@ -254,7 +256,7 @@ api.delete("/nodes/:id", auth, (req, res) => {
 
 api.get("/trash", auth, (req, res) => {
   const items = q(
-    `SELECT id,parent_id,name,type,size,mime,deleted_at,updated_at FROM nodes
+    `SELECT id,parent_id,name,type,size,mime,storage_id,encrypted,deleted_at,updated_at FROM nodes
      WHERE owner_id=? AND deleted_at IS NOT NULL AND trash_root_id=id
      ORDER BY deleted_at DESC`
   ).all(req.user.id);
@@ -324,7 +326,7 @@ api.get("/search", auth, (req, res) => {
   const term = String(req.query.q || "").trim();
   if (!term) return res.json({ results: [] });
   const results = q(
-    `SELECT id,parent_id,name,type,size,mime,updated_at FROM nodes
+    `SELECT id,parent_id,name,type,size,mime,storage_id,encrypted,created_at,updated_at FROM nodes
      WHERE name LIKE ? AND id != 'root' AND owner_id=?
      AND deleted_at IS NULL
      ORDER BY type='folder' DESC, name COLLATE NOCASE LIMIT 100`
@@ -652,7 +654,10 @@ api.get("/folders/:id/download", auth, async (req, res) => {
 
   try {
     await addFolder(rootFolder.id, "");
-  } finally {
-    archive.finalize();
+    if (!closed) archive.finalize();
+  } catch (err) {
+    if (!closed) {
+      try { archive.abort(); } catch {}
+    }
   }
 });

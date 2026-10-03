@@ -2,8 +2,8 @@ import { useEffect, useState } from "react";
 import { api, savedUser } from "./api.js";
 import { Crescent, LinkIcon, MegaphoneIcon, UsersIcon } from "./icons.jsx";
 
-// Link a storage channel: paste a private t.me/+â€¦ link (user session joins it),
-// an @name, or a -100â€¦ id â€” or pick from channels this account already has.
+// Link a storage channel: paste a private t.me/+ link (user session joins it),
+// an @name, or a -100 id, or select from channels this account already has.
 export default function Connect({ status, canSkip, onDone, onLogout }) {
   const [link, setLink] = useState("");
   const [busy, setBusy] = useState(false);
@@ -44,12 +44,13 @@ export default function Connect({ status, canSkip, onDone, onLogout }) {
         </div>
       </div>
 
-      <div className="connect-hero">
-        <h1>Link your storage</h1>
-        <p className="dim">
+      <div className="connect-main">
+        <span className="section-label">STORAGE SETUP</span>
+        <h1>Link Telegram Storage</h1>
+        <p>
           {canSkip
-            ? <>Currently linked to <b>{status.channel}</b>. Switching doesnâ€™t move files already stored there.</>
-            : "Point TeleMoon at a private Telegram channel â€” thatâ€™s where your files will live."}
+            ? <>Currently linked to <b>{status.channel}</b>. Switching channels does not move files already stored there.</>
+            : "Select a private Telegram channel to store your files."}
         </p>
 
         {offline ? (
@@ -57,8 +58,7 @@ export default function Connect({ status, canSkip, onDone, onLogout }) {
             <p><b>Telegram is offline on the server.</b></p>
             <p className="dim">{status.error}</p>
             <p className="dim">
-              Fill <span className="mono">server/.env</span> (TG_API_ID, TG_API_HASH, and a bot token
-              or user session via <span className="mono">npm run login</span>) and restart, then come back here.
+              Add TG_API_ID, TG_API_HASH, and a bot token to <span className="mono">server/.env</span>, then restart the server.
             </p>
           </div>
         ) : (
@@ -67,56 +67,66 @@ export default function Connect({ status, canSkip, onDone, onLogout }) {
             <input
               value={link}
               onChange={(e) => setLink(e.target.value)}
-              placeholder="https://t.me/c/123/45  ·  @channel  ·  -100…"
+              placeholder="Paste channel link, @handle, or chat ID"
               spellCheck={false} autoFocus
             />
             <button className="btn btn-moon" disabled={busy || !link.trim()}>
-              {busy ? "Linkingâ€¦" : "Connect"}
+              {busy ? "Linking..." : "Connect"}
             </button>
           </form>
         )}
         {err && <p className="auth-err" role="alert">{err}</p>}
+
+        {!offline && status.mode === "bot" && (
+          <div className="connect-steps">
+            <h2>Setup Steps</h2>
+            <div className="steps-list">
+              <div className="step-item">
+                <span className="step-num">01</span>
+                <span>Create a private Telegram channel in your Telegram client.</span>
+              </div>
+              <div className="step-item">
+                <span className="step-num">02</span>
+                <span>Add your TeleMoon bot as a channel administrator.</span>
+              </div>
+              <div className="step-item">
+                <span className="step-num">03</span>
+                <span>Post any message in the channel, right-click, and select Copy Post Link.</span>
+              </div>
+              <div className="step-item">
+                <span className="step-num">04</span>
+                <span>Paste the link into the field above and select Connect.</span>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
-      {!offline && (
+      {!offline && status.mode !== "bot" && (
         <section className="dialogs">
-          {status.mode === "bot" ? (
-            <div className="notice-box" style={{ textAlign: "left" }}>
-              <h2 style={{ margin: "0 0 10px", fontSize: "1.1rem" }}>How to link your channel:</h2>
-              <ol style={{ margin: 0, paddingLeft: "24px", lineHeight: 1.6, color: "var(--muted)" }}>
-                <li>Open Telegram and create a new private channel.</li>
-                <li>Add your Bot as an Administrator.</li>
-                <li>Post a message in the channel, right-click it, and select <strong>Copy Post Link</strong>.</li>
-                <li>Paste the link into the box above and click Connect!</li>
-              </ol>
+          <h2>Your channels and groups</h2>
+          {dialogs === null && !dlgErr && <p className="dim">Loading channels...</p>}
+          {dlgErr && (
+            <div className="notice-box">
+              <p className="dim">{dlgErr}</p>
             </div>
-          ) : (
-            <>
-              <h2>Your channels &amp; groups</h2>
-              {dialogs === null && !dlgErr && <p className="dim">Looking through your sky...</p>}
-              {dlgErr && (
-                <div className="notice-box">
-                  <p className="dim">{dlgErr}</p>
-                </div>
-              )}
-              {dialogs && dialogs.length === 0 && <p className="dim">No channels or groups on this account yet.</p>}
-              {dialogs && dialogs.length > 0 && (
-                <div className="cards">
-                  {dialogs.map((d) => (
-                    <button key={d.id} disabled={busy}
-                      className={`card pick ${d.current ? "current" : ""}`}
-                      onClick={() => connect(d.id)} title={d.title}>
-                      <div className="card-ico">{d.group ? <UsersIcon /> : <MegaphoneIcon />}</div>
-                      <div className="card-name">{d.title}</div>
-                      <div className="card-meta mono dim">
-                        {d.username ? `@${d.username}` : "private"} &middot; {d.group ? "group" : "channel"}
-                        {d.current ? " &middot; linked" : ""}
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </>
+          )}
+          {dialogs && dialogs.length === 0 && <p className="dim">No channels found on this account.</p>}
+          {dialogs && dialogs.length > 0 && (
+            <div className="cards">
+              {dialogs.map((d) => (
+                <button key={d.id} disabled={busy}
+                  className={`card pick ${d.current ? "current" : ""}`}
+                  onClick={() => connect(d.id)} title={d.title}>
+                  <div className="card-ico">{d.group ? <UsersIcon /> : <MegaphoneIcon />}</div>
+                  <div className="card-name">{d.title}</div>
+                  <div className="card-meta mono dim" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <span>{d.username ? `@${d.username}` : "private"} · {d.group ? "group" : "channel"}</span>
+                    {d.current && <span className="pill-tag pill-tag-green">Linked</span>}
+                  </div>
+                </button>
+              ))}
+            </div>
           )}
         </section>
       )}

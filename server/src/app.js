@@ -20,7 +20,7 @@ app.use((_req, res, next) => {
   res.set("Content-Security-Policy", [
     "default-src 'self'",
     "base-uri 'self'",
-    "connect-src 'self' https://cloudflareinsights.com",
+    "connect-src 'self' https://cloudflareinsights.com https://voxide.onrender.com wss://voxide.onrender.com",
     "font-src 'self' https://fonts.gstatic.com data:",
     "frame-ancestors 'none'",
     "frame-src 'self'",

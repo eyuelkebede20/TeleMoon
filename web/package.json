@@ -9,12 +9,13 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@voxide/react": "^0.8.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "vite-plugin-pwa": "^1.3.0"
+    "react-dom": "^18.3.1"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.3.1",
-    "vite": "^5.4.8"
+    "vite": "^5.4.8",
+    "vite-plugin-pwa": "^1.3.0"
   }
 }

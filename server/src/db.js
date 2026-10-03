@@ -257,10 +257,10 @@ export function claimLegacyStorage(ownerId) {
 claimLegacyStorage(storageOwnerId());
 
 /** Sibling-unique name: "report.pdf" -> "report (2).pdf" on collision. */
-export function uniqueName(parentId, name, ownerId) {
+export function uniqueName(parentId, name, ownerId, excludeId = null) {
   const exists = (n) =>
-    q(`SELECT 1 FROM nodes WHERE parent_id=? AND name=? AND owner_id IS ? AND deleted_at IS NULL`)
-      .get(parentId, n, ownerId);
+    q(`SELECT 1 FROM nodes WHERE parent_id=? AND name=? AND owner_id IS ? AND deleted_at IS NULL ${excludeId ? "AND id != ?" : ""}`)
+      .get(...(excludeId ? [parentId, n, ownerId, excludeId] : [parentId, n, ownerId]));
   if (!exists(name)) return name;
   const dot = name.lastIndexOf(".");
   const [base, ext] = dot > 0 ? [name.slice(0, dot), name.slice(dot)] : [name, ""];

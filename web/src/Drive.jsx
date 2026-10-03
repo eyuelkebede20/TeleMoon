@@ -6,6 +6,7 @@ import {
   DownloadIcon, TrashIcon, EditIcon, XIcon, LogoutIcon, ChevR, ShareIcon,
   RestoreIcon, FolderIcon, MoveIcon, LockIcon, ShieldIcon,
 } from "./icons.jsx";
+import { VoxideAssistant, VoxideTelemetryBadge } from "./VoxideAssistant.jsx";
 
 const fmtBytes = (n) => {
   if (n === 0) return "0 B";
@@ -73,6 +74,7 @@ function ModalShell({ title, onClose, children, className = "", initialFocusRef,
           <h2 id={titleId} className="upname">{title}</h2>
           <div className="modal-head-actions">
             {headerActions}
+            <kbd style={{ fontSize: "0.72rem", color: "var(--muted)" }}>esc</kbd>
             <button type="button" className="ghost icon-btn" onClick={onClose} aria-label="Close dialog">
               <XIcon />
             </button>
@@ -100,6 +102,10 @@ function ActionModal({ modal, onClose, onConfirm }) {
     e?.preventDefault();
     setErr("");
     if (!["remove", "purge", "emptyTrash"].includes(modal.type) && !val.trim()) return;
+    if (modal.type === "encryptPassphrase" && val.trim().length < 6) {
+      setErr("Passphrase must be at least 6 characters.");
+      return;
+    }
     setBusy(true);
     const res = await onConfirm(val.trim());
     if (res) {
@@ -112,6 +118,7 @@ function ActionModal({ modal, onClose, onConfirm }) {
     : modal.type === "rename" ? "Rename"
     : modal.type === "remove" ? "Move to Trash"
     : modal.type === "emptyTrash" ? "Empty Trash"
+    : modal.type === "encryptPassphrase" ? "Encryption Passphrase"
     : "Delete permanently";
 
   return (
@@ -127,6 +134,23 @@ function ActionModal({ modal, onClose, onConfirm }) {
                     ? <>Permanently delete everything in Trash?<br/><span className="dim modal-detail">Telegram copies will also be queued for deletion. This cannot be undone.</span></>
                     : <>Permanently delete "{modal.node.name}"?<br/><span className="dim modal-detail">Its Telegram copies will also be queued for deletion. This cannot be undone.</span></>}
               </p>
+            ) : modal.type === "encryptPassphrase" ? (
+              <label className="field-label">
+                Passphrase for new uploads
+                <input
+                  ref={inputRef}
+                  type="password"
+                  value={val}
+                  onChange={e => setVal(e.target.value)}
+                  placeholder="At least 6 characters"
+                  minLength={6}
+                  required
+                  autoComplete="new-password"
+                />
+                <span className="dim modal-detail" style={{ display: "block", marginTop: 6 }}>
+                  Files will be encrypted with AES-GCM in your browser before uploading to Telegram.
+                </span>
+              </label>
             ) : (
               <label className="field-label">
                 {modal.type === "mkdir" ? "Folder name" : "Name"}
@@ -140,7 +164,7 @@ function ActionModal({ modal, onClose, onConfirm }) {
               <button type="submit" className={["purge", "emptyTrash"].includes(modal.type) ? "btn" : "btn btn-moon"}
                 disabled={busy}
                 data-danger={["purge", "emptyTrash"].includes(modal.type) || undefined}>
-                {busy ? "Working…" : modal.type === "remove" ? "Move to Trash" : modal.type === "purge" ? "Delete permanently" : modal.type === "emptyTrash" ? "Empty Trash" : "Confirm"}
+                {busy ? "Working..." : modal.type === "remove" ? "Move to Trash" : modal.type === "purge" ? "Delete permanently" : modal.type === "emptyTrash" ? "Empty Trash" : modal.type === "encryptPassphrase" ? "Enable Encryption" : "Confirm"}
               </button>
             </div>
           </form>
@@ -218,14 +242,14 @@ function ShareModal({ modal, onClose }) {
             </select>
           </label>
           <button className="btn btn-moon share-create-btn" onClick={createNewShare} disabled={creating}>
-            {creating ? "Creating…" : "Generate Link"}
+            {creating ? "Creating..." : "Generate Link"}
           </button>
         </div>
 
         {err && <p className="auth-err share-error" role="alert">{err}</p>}
 
         <div className="share-list" aria-live="polite">
-          {loading && <p className="dim center">Loading shares…</p>}
+          {loading && <p className="dim center">Loading shares...</p>}
           {!loading && shares.length === 0 && (
             <p className="dim center">No active share links. Generate one above.</p>
           )}
@@ -282,7 +306,7 @@ function ScanRepairModal({ onClose }) {
         {running && (
           <div className="center scan-running">
             <Crescent />
-            <p className="dim">Scanning Telegram channel history and auditing chunk integrity…</p>
+            <p className="dim">Scanning Telegram channel history and auditing chunk integrity...</p>
           </div>
         )}
         {err && (
@@ -388,7 +412,7 @@ function DecryptModal({ node, onClose, onDecrypted }) {
           <div className="modal-actions">
             <button type="button" className="btn" onClick={onClose}>Cancel</button>
             <button type="submit" className="btn btn-moon" disabled={busy || !passphrase}>
-              {busy ? "Decrypting…" : "Unlock"}
+              {busy ? "Decrypting..." : "Unlock"}
             </button>
           </div>
         </form>
@@ -441,7 +465,7 @@ function MoveModal({ node, onClose, onMoved }) {
           ))}
         </nav>
         <div className="move-list" aria-live="polite">
-          {!view && !err && <p className="dim move-state">Reading folders…</p>}
+          {!view && !err && <p className="dim move-state">Reading folders...</p>}
           {view && folders.length === 0 && <p className="dim move-state">No folders inside {currentName}.</p>}
           {folders.map((folder) => (
             <button key={folder.id} className="move-folder" onClick={() => setFolderId(folder.id)}>
@@ -456,7 +480,7 @@ function MoveModal({ node, onClose, onMoved }) {
           <button className="btn" onClick={onClose}>Cancel</button>
           <button className="btn btn-moon" onClick={moveHere}
             disabled={busy || !view || folderId === node.parent_id}>
-            {busy ? "Moving…" : folderId === node.parent_id ? "Already here" : `Move to ${currentName}`}
+            {busy ? "Moving..." : folderId === node.parent_id ? "Already here" : `Move to ${currentName}`}
           </button>
         </div>
       </div>
@@ -481,9 +505,25 @@ export default function Drive({ user, onLogout, onStorage }) {
   const folderInput = useRef(null);
   const resumeInput = useRef(null);
   const resumeTarget = useRef(null);
+  const searchInput = useRef(null);
   const queue = useRef(Promise.resolve());
   const refreshRun = useRef(0);
   const cwd = stack[stack.length - 1];
+
+  useEffect(() => {
+    function onKeyDown(e) {
+      if (
+        e.key === "/" &&
+        document.activeElement?.tagName !== "INPUT" &&
+        document.activeElement?.tagName !== "TEXTAREA"
+      ) {
+        e.preventDefault();
+        searchInput.current?.focus();
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   useEffect(() => {
     const timer = setTimeout(() => setDebouncedQ(q.trim()), 250);
@@ -740,7 +780,7 @@ export default function Drive({ user, onLogout, onStorage }) {
       }
       enqueue(filesToUpload, emptyFolders);
     } catch (err) {
-      setError(`Could not read that dropped folder — ${err.message}`);
+      setError(`Could not read that dropped folder: ${err.message}`);
     }
   }
   async function dropOnFolder(e, folder) {
@@ -748,11 +788,42 @@ export default function Drive({ user, onLogout, onStorage }) {
     const id = e.dataTransfer.getData("application/x-telemoon-node");
     if (!id || id === folder.id) return;
     try { await api.move(id, folder.id); refresh(); }
-    catch (ex) { setError(`Could not move that item — ${ex.message}`); }
+    catch (ex) { setError(`Could not move that item: ${ex.message}`); }
   }
 
   const previewable = (n) =>
     /^image\/|^video\/|^audio\/|^application\/pdf$/.test(n.mime || "");
+
+  const driveContext = {
+    stack,
+    setStack,
+    cwd,
+    items,
+    q,
+    setQ,
+    trashMode,
+    setTrashMode,
+    encryptUploads: encryptNext,
+    setEncryptUploads: (val) => {
+      if (val && !encryptPassphrase) {
+        setModal({ type: "encryptPassphrase" });
+      } else {
+        setEncryptNext(val);
+      }
+    },
+    encryptPassphrase,
+    status,
+    setModal,
+    onOpenFolder: (folder) => {
+      setQ("");
+      setStack((s) => [...s, folder]);
+    },
+    createFolder: (name) => api.mkdir(cwd.id, name).then(() => refresh()),
+    trashNode: async (node) => {
+      await api.del(node.id);
+      refresh();
+    },
+  };
 
   return (
     <div className="app"
@@ -761,13 +832,19 @@ export default function Drive({ user, onLogout, onStorage }) {
       onDrop={onDrop}>
 
       <header className="topbar">
-        <div className="brand"><Crescent /><span>TeleMoon</span></div>
-        <div className="searchbox">
+        <div className="brand"><Crescent size={22} /><span>TeleMoon</span></div>
+        <div className="searchbox" onClick={() => searchInput.current?.focus()}>
           <SearchIcon />
-          <input placeholder={trashMode ? "Search is unavailable in Trash" : "Search the drive"} value={q}
+          <input
+            ref={searchInput}
+            placeholder={trashMode ? "Search is unavailable in Trash" : "Search files..."}
+            value={q}
             disabled={trashMode}
-            onChange={(e) => setQ(e.target.value)} aria-label="Search" />
-          {q && <button className="ghost" onClick={() => setQ("")} aria-label="Clear search"><XIcon /></button>}
+            onChange={(e) => setQ(e.target.value)}
+            aria-label="Search"
+          />
+          {!q && <kbd className="search-kbd" title="Press / to search">/</kbd>}
+          {q && <button className="ghost icon-btn" onClick={() => setQ("")} aria-label="Clear search"><XIcon /></button>}
         </div>
         <div className="top-actions">
           {trashMode ? (
@@ -779,11 +856,14 @@ export default function Drive({ user, onLogout, onStorage }) {
             <>
               <label className="topbar-encrypt-toggle" title="Encrypt uploads with AES-GCM before sending to Telegram">
                 <input type="checkbox" checked={encryptNext} onChange={(e) => {
-                  setEncryptNext(e.target.checked);
-                  if (e.target.checked && !encryptPassphrase) {
-                    const pass = window.prompt("Enter an encryption passphrase for new uploads:");
-                    if (pass) setEncryptPassphrase(pass);
-                    else setEncryptNext(false);
+                  if (e.target.checked) {
+                    if (!encryptPassphrase) {
+                      setModal({ type: "encryptPassphrase" });
+                    } else {
+                      setEncryptNext(true);
+                    }
+                  } else {
+                    setEncryptNext(false);
                   }
                 }} />
                 <LockIcon /> <span>Encrypt</span>
@@ -812,25 +892,47 @@ export default function Drive({ user, onLogout, onStorage }) {
       </header>
 
       <nav className="crumbs" aria-label="Breadcrumb">
-        {trashMode ? (
-          <span className="crumb on">Trash</span>
-        ) : searching ? (
-          <span className="crumb on">Search: “{q}”</span>
-        ) : stack.map((c, i) => (
-          <span key={c.id} className="crumb-wrap">
-            {i > 0 && <ChevR />}
-            <button className={`crumb ${i === stack.length - 1 ? "on" : ""}`}
-              onClick={() => setStack(stack.slice(0, i + 1))}>{c.name}</button>
-          </span>
-        ))}
+        <div className="crumbs-trail">
+          {trashMode ? (
+            <span className="crumb on">Trash</span>
+          ) : searching ? (
+            <span className="crumb on">Search: "{q}"</span>
+          ) : stack.map((c, i) => (
+            <span key={c.id} className="crumb-wrap">
+              {i > 0 && <ChevR />}
+              <button className={`crumb ${i === stack.length - 1 ? "on" : ""}`}
+                onClick={() => setStack(stack.slice(0, i + 1))}>{c.name}</button>
+            </span>
+          ))}
+        </div>
+        {!loading && (
+          <div className="crumbs-meta mono dim">
+            {items.length} {items.length === 1 ? "item" : "items"}
+          </div>
+        )}
       </nav>
 
       <main className="content">
-        {loading && <div className="empty" role="status">Reading the sky…</div>}
+        {loading && <div className="empty" role="status">Loading files...</div>}
         {!loading && error && <div className="empty err" role="alert">{error}</div>}
         {!loading && !error && items.length === 0 && (
-          <div className="empty">
-            {trashMode ? "Trash is empty." : searching ? "Nothing matches." : "This folder is empty — drop files anywhere to upload."}
+          <div className="empty-zone">
+            <div className="empty-wireframe">
+              <UploadIcon />
+              <h3>{trashMode ? "Trash is empty" : searching ? "No matching files" : "Drop files to upload"}</h3>
+              <p className="dim">
+                {trashMode
+                  ? "Deleted files and folders appear here before permanent removal."
+                  : searching
+                  ? `No files match "${q}". Check your spelling or clear search.`
+                  : "Drag and drop files or folders anywhere on the screen."}
+              </p>
+              {!trashMode && !searching && (
+                <button className="btn btn-moon" onClick={() => fileInput.current?.click()}>
+                  <UploadIcon /> Select Files
+                </button>
+              )}
+            </div>
           </div>
         )}
 
@@ -838,11 +940,17 @@ export default function Drive({ user, onLogout, onStorage }) {
           <div className="cards">
             {items.map((n) => {
               const Icon = iconFor(n);
+              const ext = n.type === "folder" ? "DIR" : (n.name.split(".").pop() || "FILE").toUpperCase().slice(0, 4);
               const cardContent = (
                 <>
-                  {n.encrypted === 1 && (
-                    <span className="card-lock-badge" title="Encrypted"><LockIcon /></span>
-                  )}
+                  <div className="card-header-meta">
+                    <span className="card-type-tag mono">{ext}</span>
+                    {n.encrypted === 1 && (
+                      <span className="card-lock-badge" title="Encrypted with AES-GCM">
+                        <LockIcon /> <span>AES</span>
+                      </span>
+                    )}
+                  </div>
                   <div className="card-ico">
                     {!trashMode && n.type === "file" && !n.encrypted && n.mime?.startsWith("image/") && n.size < 1024 * 1024 ? (
                       <img className="card-thumb" src={api.fileUrl(n.id)} alt="" loading="lazy"
@@ -898,13 +1006,16 @@ export default function Drive({ user, onLogout, onStorage }) {
       <footer className="statusbar" role="status" aria-live="polite">
         <span className={`dot ${status?.telegram === "connected" ? "ok" : "off"}`} aria-hidden="true" />
         {status?.telegram === "connected"
-          ? <>Linked to <b>{status.channel}</b> · parts of {fmtBytes(status.chunkBytes)}</>
-          : <>Storage offline{status?.error ? ` — ${status.error}` : ""}</>}
+          ? <><span>MTPROTO ONLINE</span> · Channel: <b>{status.channel}</b> · Chunk: {fmtBytes(status.chunkBytes)}</>
+          : <><span>MTPROTO OFFLINE</span>{status?.error ? `: ${status.error}` : ""}</>}
+        <VoxideTelemetryBadge />
         <button className="ghost storage-link" onClick={() => setModal({ type: "scan" })}>
-          <ShieldIcon /> Repair & Scan
+          <ShieldIcon /> Repair &amp; Scan
         </button>
-        {onStorage && <button className="ghost storage-link" onClick={onStorage}>Storage…</button>}
+        {onStorage && <button className="ghost storage-link" onClick={onStorage}>Storage</button>}
       </footer>
+
+      <VoxideAssistant driveContext={driveContext} />
 
       {uploads.length > 0 && (
         <aside className="uppanel" aria-label="Uploads" aria-live="polite">
@@ -915,10 +1026,10 @@ export default function Drive({ user, onLogout, onStorage }) {
               <div className="upmeta">
                 <span className="upname" title={u.name}>{u.name}</span>
                 <span className="mono dim">
-                  {u.status === "error" ? `failed — ${u.err}`
-                    : u.status === "interrupted" ? `ready to resume · ${Math.round(u.pct)}% stored`
-                    : u.status === "done" ? "stored ✓"
-                    : u.parts > 1 ? `part ${u.part}/${u.parts} · ${Math.round(u.pct)}%`
+                  {u.status === "error" ? `Failed: ${u.err}`
+                    : u.status === "interrupted" ? `Ready to resume (${Math.round(u.pct)}%)`
+                    : u.status === "done" ? "Stored"
+                    : u.parts > 1 ? `Part ${u.part}/${u.parts} (${Math.round(u.pct)}%)`
                     : `${Math.round(u.pct)}%`}
                 </span>
               </div>
@@ -949,9 +1060,18 @@ export default function Drive({ user, onLogout, onStorage }) {
       ) : modal ? (
         <ActionModal 
           modal={modal}
-          onClose={() => setModal(null)}
+          onClose={() => {
+            if (modal.type === "encryptPassphrase") setEncryptNext(false);
+            setModal(null);
+          }}
           onConfirm={async (val) => {
             try {
+              if (modal.type === "encryptPassphrase") {
+                setEncryptPassphrase(val);
+                setEncryptNext(true);
+                setModal(null);
+                return;
+              }
               if (modal.type === "mkdir") await api.mkdir(cwd.id, val);
               if (modal.type === "rename") await api.rename(modal.node.id, val);
               if (modal.type === "remove") await api.del(modal.node.id);
