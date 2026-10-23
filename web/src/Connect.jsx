@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { api } from "./api.js";
+import { api, savedUser } from "./api.js";
 import { Crescent, LinkIcon, MegaphoneIcon, UsersIcon } from "./icons.jsx";
 
 // Link a storage channel: paste a private t.me/+… link (user session joins it),
@@ -10,6 +10,9 @@ export default function Connect({ status, canSkip, onDone, onLogout }) {
   const [err, setErr] = useState("");
   const [dialogs, setDialogs] = useState(null);
   const [dlgErr, setDlgErr] = useState("");
+  const [syncPrompt, setSyncPrompt] = useState(null);
+  const [syncing, setSyncing] = useState(false);
+  const [syncResult, setSyncResult] = useState(null);
   const offline = !status.mode; // no Telegram client at all
 
   useEffect(() => {
@@ -19,19 +22,40 @@ export default function Connect({ status, canSkip, onDone, onLogout }) {
       .catch((e) => setDlgErr(e.message));
   }, [offline]);
 
-  async function connect(ref) {
+  async function connect(ref, titleHint) {
     setBusy(true); setErr("");
     try {
-      await api.saveChannel(ref);
+      let channelId = ref;
+      let title = titleHint || ref;
+      if (typeof ref === "string" && (ref.includes("t.me") || ref.includes("telegram.me") || ref.startsWith("@"))) {
+        const res = await api.connect(ref);
+        channelId = res.id;
+        title = res.title || title;
+      } else {
+        await api.saveChannel(ref);
+      }
       
       // Update local storage so the UI knows they have a channel
       const u = savedUser.get();
-      if (u) savedUser.set({ ...u, channel_id: ref });
+      if (u) savedUser.set({ ...u, channel_id: channelId });
       
-      onDone();
+      setSyncPrompt({ channelId, title });
     }
     catch (e) { setErr(e.message); }
     finally { setBusy(false); }
+  }
+
+  async function runSync() {
+    setSyncing(true);
+    setErr("");
+    try {
+      const res = await api.syncTelegram(1000);
+      setSyncResult(res);
+    } catch (e) {
+      setErr("Sync failed: " + e.message);
+    } finally {
+      setSyncing(false);
+    }
   }
 
   return (
@@ -100,7 +124,7 @@ export default function Connect({ status, canSkip, onDone, onLogout }) {
               {dialogs.map((d) => (
                 <button key={d.id} disabled={busy}
                   className={`card pick ${d.current ? "current" : ""}`}
-                  onClick={() => connect(d.id)} title={d.title}>
+                  onClick={() => connect(d.id, d.title)} title={d.title}>
                   <div className="card-ico">{d.group ? <UsersIcon /> : <MegaphoneIcon />}</div>
                   <div className="card-name">{d.title}</div>
                   <div className="card-meta mono dim">
@@ -112,6 +136,47 @@ export default function Connect({ status, canSkip, onDone, onLogout }) {
             </div>
           )}
         </section>
+      )}
+
+      {syncPrompt && (
+        <div className="modal">
+          <div className="modal-card" style={{ maxWidth: 440, minHeight: 'auto' }}>
+            <header>
+              <span className="upname">Group Linked</span>
+            </header>
+            <div className="modal-body" style={{ minHeight: 'auto', padding: "24px 20px", display: "block" }}>
+              <p style={{ margin: "0 0 16px", fontSize: "0.95rem", lineHeight: 1.5 }}>
+                Successfully linked to <b>{syncPrompt.title}</b>!
+                <br /><br />
+                Would you like to import all existing files from this group's history into TeleMoon?
+              </p>
+              {syncing && <p className="dim" style={{ fontSize: "0.9rem" }}>Scanning messages and indexing files…</p>}
+              {syncResult && (
+                <p style={{ color: "var(--moon)", fontSize: "0.9rem", lineHeight: 1.4 }}>
+                  ✓ Imported {syncResult.imported} file(s) into <b>/Telegram Inbox</b>!
+                  <br /><span className="dim" style={{ fontSize: "0.85rem" }}>({syncResult.scanned} messages scanned)</span>
+                </p>
+              )}
+              {err && <p className="auth-err" style={{ marginTop: 8 }}>{err}</p>}
+              <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end", marginTop: "20px" }}>
+                {!syncResult ? (
+                  <>
+                    <button type="button" className="btn" disabled={syncing} onClick={onDone}>
+                      Skip for now
+                    </button>
+                    <button type="button" className="btn btn-moon" disabled={syncing} onClick={runSync}>
+                      {syncing ? "Scanning…" : "Import All Files"}
+                    </button>
+                  </>
+                ) : (
+                  <button type="button" className="btn btn-moon" onClick={onDone}>
+                    Go to Drive
+                  </button>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );

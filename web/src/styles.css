@@ -294,6 +294,23 @@ input:-webkit-autofill:active {
   .linkbox { flex-wrap: wrap; }
 }
 
+@keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+.spin { animation: spin 1s linear infinite; }
+
+.toast-banner {
+  background: var(--panel);
+  border: 1px solid var(--moon-deep);
+  color: var(--moon);
+  padding: 8px 16px;
+  border-radius: 8px;
+  font-size: 0.88rem;
+  margin: 12px 24px 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  animation: fadeIn 0.2s ease;
+}
+
 @media (prefers-reduced-motion: reduce) {
   * { transition: none !important; animation: none !important; }
 }
