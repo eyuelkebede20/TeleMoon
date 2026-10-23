@@ -40,7 +40,6 @@ api.get("/status", (_req, res) => {
     error: tg.error,
     chunkBytes: cfg.chunkBytes,
     users: q(`SELECT COUNT(*) c FROM users`).get().c,
-    inviteRequired: !!cfg.inviteCode,
   });
 });
 
@@ -63,10 +62,10 @@ api.post("/auth/enter", async (req, res) => {
     return res.json({ token: sign(user), user: { id: user.id, handle, channel_id: user.channel_id } });
   }
 
-  const u = { id: uid(), handle, pass_hash: await bcrypt.hash(password, 10), created_at: now() };
-  q(`INSERT INTO users(id,handle,pass_hash,created_at) VALUES (?,?,?,?)`)
-    .run(u.id, u.handle, u.pass_hash, u.created_at);
-  res.json({ token: sign(u), user: { id: u.id, handle }, created: true });
+  const u = { id: uid(), handle, pass_hash: await bcrypt.hash(password, 10), created_at: now(), telegram_id: req.body?.telegramId || null };
+  q(`INSERT INTO users(id,handle,pass_hash,telegram_id,created_at) VALUES (?,?,?,?,?)`)
+    .run(u.id, u.handle, u.pass_hash, u.telegram_id, u.created_at);
+  res.json({ token: sign(u), user: { id: u.id, handle, telegram_id: u.telegram_id }, created: true });
 });
 
 /* ------------------------------------------------------- storage linking */

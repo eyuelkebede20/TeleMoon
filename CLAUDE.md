@@ -27,9 +27,8 @@ Browser (React/Vite, web/) ── JSON /api ──► Express (server/src)
 ## API surface (all under /api, Bearer JWT; `?t=` accepted for content URLs)
 
 ```
-GET  /status                                   public health + channel + mode + inviteRequired + chunkBytes
-POST /auth/enter {handle,password,invite?}     one door: known @handle signs in, new one is claimed
-                                               (invite only if INVITE_CODE set & users>0)
+GET  /status                                   public health + channel + mode + chunkBytes
+POST /auth/enter {handle,password}             one door: known @handle signs in, new one is claimed
 GET  /tg/dialogs                               channels/supergroups of the account (user session only)
 POST /tg/connect {link}                        t.me/+HASH | @name | -100… → join/resolve, persist in settings
 GET  /nodes/:id/children                       {folder,breadcrumb,children}; id 'root'
@@ -46,7 +45,7 @@ GET  /files/:id/content[?dl=1]                 streams; full Range support acros
 
 ## Env
 
-`TG_API_ID` `TG_API_HASH` `TG_BOT_TOKEN` (bot mode) | `TG_SESSION` (user mode via `npm run login`, premium → 4 GB; required for invite-link joins + dialog list) · `TG_CHANNEL_ID` (optional seed; the UI-linked channel in `settings` wins) · `PORT` `DATA_DIR` `JWT_SECRET` `INVITE_CODE` (optional; empty = open handle claiming) `CHUNK_MB` (≤1900).
+`TG_API_ID` `TG_API_HASH` `TG_BOT_TOKEN` (bot mode) | `TG_SESSION` (user mode via `npm run login`, premium → 4 GB; required for invite-link joins + dialog list) · `TG_CHANNEL_ID` (optional seed; the UI-linked channel in `settings` wins) · `PORT` `DATA_DIR` `JWT_SECRET` `CHUNK_MB` (≤1900).
 
 ## Ops runbook
 
@@ -65,10 +64,10 @@ Ink `#0E1220` / panel `#171C30` / line `#262D4A` / text `#E9ECFA` / muted `#9099
 
 - 2026-07-19 MTProto over Bot HTTP API (20/50 MB caps kill the concept). GramJS chosen (Node stack consistency).
 - 2026-07-19 Chunk default 1536 MB (user's 1.5 GB instinct; hard cap 2 GB bot). Client slices via Blob.slice; server buffers one part on disk, never in RAM.
-- 2026-07-19 One shared workspace for all accounts (friends-circle model), invite-gated registration. Per-user drives = roadmap.
+- 2026-07-19 One shared workspace for all accounts (friends-circle model). Per-user drives = roadmap.
 - 2026-07-19 Hard delete incl. Telegram messages; no trash. Judged acceptable for v0 with confirm dialog.
 - 2026-07-19 Indexer ingests only `document` media (photos sent as photos lack filenames; "send as File" to index).
-- 2026-07-19 No-signup auth: single `/auth/enter` with Telegram-style `@handle` + password; unknown handle = claimed on the spot (INVITE_CODE optional gate). Email/name dropped; old DBs migrate handle = email local part.
+- 2026-07-19 No-signup auth: single `/auth/enter` with Telegram-style `@handle` + password; unknown handle = claimed on the spot. Email/name dropped; old DBs migrate handle = email local part.
 - 2026-07-19 Channel linking moved into the app (paste t.me/+ link or pick from dialogs), persisted in `settings` table. Requires user session for joins/dialogs; bot mode connects by @name/-100 id only. Channels/supergroups only (`className === "Channel"`).
 - 2026-07-19 Drive UI switched from table rows to card grid ("simple boxes"); `design-principle.md` added as the design contract for all pages.
 

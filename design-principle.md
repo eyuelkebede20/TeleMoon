@@ -61,8 +61,7 @@ The moon/night metaphor is used sparingly, in microcopy only.
 ## 8. Per-page checklists
 
 **Enter (Auth)** — one box, centered. Crescent + wordmark, one-line promise,
-`@handle` + password, one gold button. Invite field only when the server
-requires it. No tabs, no second mode.
+`@handle` + password, one gold button. No tabs, no second mode.
 
 **Link storage (Connect)** — one hero box with the paste-a-link input and one
 gold Connect button. Below, the user's channels/groups as a grid of simple

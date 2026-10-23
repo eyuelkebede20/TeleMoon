@@ -16,6 +16,7 @@ CREATE TABLE IF NOT EXISTS users(
   handle TEXT UNIQUE NOT NULL,
   pass_hash TEXT NOT NULL,
   channel_id TEXT,
+  telegram_id TEXT,
   created_at INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS settings(
@@ -70,9 +71,10 @@ export const uid = () => nanoid(12);
 // Migrate existing databases for SaaS pivot
 try {
   db.exec(`ALTER TABLE users ADD COLUMN channel_id TEXT`);
-} catch (e) {
-  // Ignore error if column already exists
-}
+} catch (e) {}
+try {
+  db.exec(`ALTER TABLE users ADD COLUMN telegram_id TEXT`);
+} catch (e) {}
 
 export const q = (sql) => db.prepare(sql);
 

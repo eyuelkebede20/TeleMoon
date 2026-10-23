@@ -14,7 +14,7 @@ Talks **MTProto** (GramJS) — not the Bot HTTP API, which caps transfers at 20/
    npm run dev:server        # terminal 1
    npm run dev:web           # terminal 2 → http://localhost:5173
    ```
-4. **Enter** — type any `@handle` + password. No signup: a new handle becomes yours on the spot (set `INVITE_CODE` to gate strangers).
+4. **Enter** — type any `@handle` + password. No signup: a new handle becomes yours on the spot.
 5. **Link storage in the app** — paste your private channel's invite link (or pick one of your existing channels from the list). Remembered in the database; no restart needed.
 
 ## Production
