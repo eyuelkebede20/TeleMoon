@@ -174,15 +174,33 @@ export function isAncestor(maybeAncestorId, nodeId) {
 }
 
 /** Folder used by the indexer for files posted directly in the channel. */
-export function ensureInboxFolder() {
-  const found = q(
-    `SELECT * FROM nodes WHERE parent_id='root' AND type='folder' AND name=?`
-  ).get("Telegram Inbox");
+export function ensureInboxFolder(ownerId) {
+  let found;
+  if (ownerId) {
+    found = q(
+      `SELECT * FROM nodes WHERE parent_id='root' AND type='folder' AND name=? AND owner_id=?`
+    ).get("Telegram Inbox", ownerId);
+  }
+  if (!found) {
+    found = q(
+      `SELECT * FROM nodes WHERE parent_id='root' AND type='folder' AND name=? AND (owner_id=? OR owner_id IS NULL)`
+    ).get("Telegram Inbox", ownerId || null);
+  }
   if (found) return found;
   const id = uid();
-  q(`INSERT INTO nodes(id,parent_id,name,type,size,created_at,updated_at)
-     VALUES (?,?,?,?,0,?,?)`).run(id, "root", "Telegram Inbox", "folder", now(), now());
+  q(`INSERT INTO nodes(id,parent_id,name,type,size,owner_id,created_at,updated_at)
+     VALUES (?,?,?,?,0,?,?,?)`).run(id, "root", "Telegram Inbox", "folder", ownerId || null, now(), now());
   return getNode(id);
+}
+
+export function getIndexedMessageIds(ownerId) {
+  const rows = q(`
+    SELECT DISTINCT c.msg_id
+    FROM chunks c
+    JOIN nodes n ON c.file_id = n.id
+    WHERE (? IS NULL OR n.owner_id = ? OR n.owner_id IS NULL)
+  `).all(ownerId || null, ownerId || null);
+  return new Set(rows.map((r) => r.msg_id));
 }
 
 export function createFileNode({ parentId, name, size, mime, ownerId, parts }) {

@@ -16,7 +16,7 @@ import {
 } from "./db.js";
 import { sign, auth } from "./auth.js";
 import {
-  tg, sendDocument, deleteMessages, streamRange, connectByLink, listDialogs,
+  tg, sendDocument, deleteMessages, streamRange, connectByLink, listDialogs, syncChannelHistory,
 } from "./telegram.js";
 
 export const api = Router();
@@ -96,9 +96,29 @@ api.post("/user/channel", auth, async (req, res) => {
 
 api.post("/tg/connect", auth, async (req, res) => {
   try {
-    res.json(await connectByLink(req.body?.link));
+    const channel = await connectByLink(req.body?.link);
+    if (channel?.id) {
+      q(`UPDATE users SET channel_id=? WHERE id=?`).run(channel.id, req.user.id);
+    }
+    res.json(channel);
   } catch (e) {
     bad(res, e.status || 500, e.errorMessage || e.message);
+  }
+});
+
+api.post("/tg/sync", auth, async (req, res) => {
+  try {
+    let peer;
+    try { peer = getUserPeer(req.user.id); } catch (e) {}
+    const limit = req.body?.limit ? Number(req.body.limit) : 1000;
+    const result = await syncChannelHistory({
+      peerRef: peer,
+      ownerId: req.user.id,
+      limit,
+    });
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    bad(res, e.status || 500, e.message);
   }
 });
 
@@ -178,6 +198,99 @@ api.post("/nodes/:id/share", auth, (req, res) => {
   if (!node || node.type !== "file") return bad(res, 404, "file not found");
   const shareId = createShare(node.id);
   res.json({ shareId });
+});
+
+api.get("/folders/tree", auth, (req, res) => {
+  const folders = q(
+    `SELECT id, parent_id, name FROM nodes
+     WHERE type='folder' AND (owner_id=? OR owner_id IS NULL)
+     ORDER BY name COLLATE NOCASE`
+  ).all(req.user.id);
+  res.json({ folders });
+});
+
+api.post("/nodes/move", auth, (req, res) => {
+  const { ids, targetParentId } = req.body || {};
+  if (!Array.isArray(ids) || !ids.length) return bad(res, 400, "ids array required");
+  const target = getNode(targetParentId);
+  if (!target || target.type !== "folder") return bad(res, 404, "target folder not found");
+
+  let moved = 0;
+  db.transaction(() => {
+    for (const id of ids) {
+      const node = getNode(id);
+      if (!node || node.id === "root" || node.parent_id === target.id) continue;
+      if (node.type === "folder" && isAncestor(node.id, target.id)) continue;
+      q(`UPDATE nodes SET parent_id=?, name=?, updated_at=? WHERE id=?`)
+        .run(target.id, uniqueName(target.id, node.name, req.user.id), now(), node.id);
+      moved++;
+    }
+  })();
+  res.json({ ok: true, moved });
+});
+
+api.post("/folders/:id/auto-organize", auth, (req, res) => {
+  const folder = getNode(req.params.id);
+  if (!folder || folder.type !== "folder") return bad(res, 404, "folder not found");
+
+  const folderChildren = children(folder.id, req.user.id);
+  const files = folderChildren.filter((c) => c.type === "file");
+  if (files.length === 0) {
+    return res.json({ ok: true, organized: 0, message: "No files to organize in this folder" });
+  }
+
+  const CATEGORIES = {
+    Documents: [".pdf", ".doc", ".docx", ".txt", ".rtf", ".odt", ".xls", ".xlsx", ".ppt", ".pptx", ".csv", ".epub", ".pages", ".key"],
+    Images: [".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".bmp", ".tiff", ".ico", ".psd"],
+    Videos: [".mp4", ".mkv", ".mov", ".avi", ".webm", ".flv", ".wmv", ".m4v", ".3gp"],
+    Audio: [".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac", ".wma", ".opus"],
+    Archives: [".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz", ".iso", ".dmg"],
+    Code: [".js", ".jsx", ".ts", ".tsx", ".py", ".html", ".css", ".json", ".xml", ".yaml", ".yml", ".md", ".sh", ".c", ".cpp", ".rs", ".go", ".java", ".sql"],
+  };
+
+  const getCategory = (file) => {
+    const ext = path.extname(file.name || "").toLowerCase();
+    for (const [cat, exts] of Object.entries(CATEGORIES)) {
+      if (exts.includes(ext)) return cat;
+    }
+    if (file.mime?.startsWith("image/")) return "Images";
+    if (file.mime?.startsWith("video/")) return "Videos";
+    if (file.mime?.startsWith("audio/")) return "Audio";
+    if (file.mime?.includes("pdf") || file.mime?.includes("document") || file.mime?.includes("text/")) return "Documents";
+    if (file.mime?.includes("zip") || file.mime?.includes("compressed") || file.mime?.includes("tar")) return "Archives";
+    return "Other";
+  };
+
+  const existingSubfolders = folderChildren.filter((c) => c.type === "folder");
+  const subfolderMap = new Map();
+  for (const sf of existingSubfolders) {
+    subfolderMap.set(sf.name, sf.id);
+  }
+
+  const getOrCreateSubfolder = (name) => {
+    if (subfolderMap.has(name)) return subfolderMap.get(name);
+    const id = uid();
+    const t = now();
+    q(`INSERT INTO nodes(id,parent_id,name,type,size,owner_id,created_at,updated_at)
+       VALUES (?,?,?,?,0,?,?,?)`).run(
+      id, folder.id, uniqueName(folder.id, name, req.user.id), "folder", req.user.id, t, t
+    );
+    subfolderMap.set(name, id);
+    return id;
+  };
+
+  let organized = 0;
+  db.transaction(() => {
+    for (const file of files) {
+      const cat = getCategory(file);
+      const targetFolderId = getOrCreateSubfolder(cat);
+      q(`UPDATE nodes SET parent_id=?, name=?, updated_at=? WHERE id=?`)
+        .run(targetFolderId, uniqueName(targetFolderId, file.name, req.user.id), now(), file.id);
+      organized++;
+    }
+  })();
+
+  res.json({ ok: true, organized, categories: Array.from(subfolderMap.keys()) });
 });
 
 /* -------------------------------------------------------- chunked uploads */

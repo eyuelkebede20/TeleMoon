@@ -7,7 +7,7 @@ import eventsMod from "telegram/events/index.js";
 import bigInt from "big-integer";
 import { cfg } from "./config.js";
 import {
-  ensureInboxFolder, createFileNode, getSetting, setSetting,
+  ensureInboxFolder, createFileNode, getSetting, setSetting, getIndexedMessageIds,
 } from "./db.js";
 
 const { TelegramClient, Api } = telegram;
@@ -136,6 +136,94 @@ export async function listDialogs() {
     }));
 }
 
+/** Resolve a string, bigInt, or entity into a Telegram Entity */
+export async function resolvePeer(refOrEntity) {
+  if (!tg.client) throw err("Telegram offline", 503);
+  if (!refOrEntity) return tg.channel;
+  if (typeof refOrEntity === "object" && refOrEntity.className) return refOrEntity;
+  const r = String(refOrEntity).trim();
+  return await tg.client.getEntity(/^-?\d+$/.test(r) ? bigInt(r) : r.startsWith("@") ? r : `@${r}`);
+}
+
+/**
+ * Scan past history of a channel / supergroup and index all documents into the virtual drive.
+ */
+export async function syncChannelHistory({ peerRef, ownerId, limit = 1000 } = {}) {
+  assertReady();
+  const entity = await resolvePeer(peerRef);
+  if (!entity) throw err("No channel or group connected", 400);
+
+  const existingMsgIds = getIndexedMessageIds(ownerId);
+  const inbox = ensureInboxFolder(ownerId);
+
+  let scanned = 0;
+  let imported = 0;
+  let skipped = 0;
+
+  for await (const m of tg.client.iterMessages(entity, { limit })) {
+    scanned++;
+    if (!m) continue;
+
+    // Skip TeleMoon multipart uploads
+    if ((m.message || "").startsWith("tm1;")) {
+      skipped++;
+      continue;
+    }
+
+    const doc = m.media?.document;
+    if (!doc) continue;
+
+    // Skip stickers
+    if (doc.attributes?.some((a) => a.className === "DocumentAttributeSticker")) {
+      continue;
+    }
+
+    // Already indexed in our database
+    if (existingMsgIds.has(m.id)) {
+      skipped++;
+      continue;
+    }
+
+    const fnAttr = doc.attributes?.find(
+      (a) => a.className === "DocumentAttributeFilename"
+    );
+    let name = fnAttr?.fileName;
+    if (!name) {
+      const audioAttr = doc.attributes?.find(
+        (a) => a.className === "DocumentAttributeAudio"
+      );
+      if (audioAttr?.title) {
+        name = `${audioAttr.performer ? audioAttr.performer + " - " : ""}${audioAttr.title}`;
+        const ext = doc.mimeType?.includes("ogg") ? ".ogg" : doc.mimeType?.includes("mp3") ? ".mp3" : ".m4a";
+        if (!name.endsWith(ext)) name += ext;
+      } else if (doc.attributes?.some((a) => a.className === "DocumentAttributeVideo")) {
+        name = `video_${m.id}.mp4`;
+      } else {
+        const ext = doc.mimeType ? `.${doc.mimeType.split("/")[1] || "bin"}` : "";
+        name = `telegram_${m.id}${ext}`;
+      }
+    }
+
+    name = name.replace(/[/\\]/g, "-").trim() || `telegram_${m.id}`;
+    const size = Number(doc.size?.toString?.() ?? doc.size);
+    if (!size || isNaN(size)) continue;
+
+    createFileNode({
+      parentId: inbox.id,
+      name,
+      size,
+      mime: doc.mimeType || null,
+      ownerId: ownerId || null,
+      parts: [{ msg_id: m.id, size }],
+    });
+
+    existingMsgIds.add(m.id);
+    imported++;
+  }
+
+  return { scanned, imported, skipped, folderId: inbox.id, folderName: inbox.name };
+}
+
 function onChannelPost(ev) {
   try {
     const m = ev.message;
@@ -149,6 +237,7 @@ function onChannelPost(ev) {
     const doc = m.media?.document;
     if (!doc) return; // photos/stickers ignored — send as "File" to index
     if ((m.message || "").startsWith("tm1;")) return; // our own upload part
+    if (doc.attributes?.some((a) => a.className === "DocumentAttributeSticker")) return;
 
     const fnAttr = doc.attributes?.find(
       (a) => a.className === "DocumentAttributeFilename"
@@ -176,7 +265,8 @@ function assertReady() {
 /** Upload a file from disk into the channel. Returns the message id. */
 export async function sendDocument(filePath, fileName, caption, peer = tg.channel) {
   assertReady();
-  const msg = await tg.client.sendFile(peer, {
+  const target = peer ? await resolvePeer(peer) : tg.channel;
+  const msg = await tg.client.sendFile(target, {
     file: filePath,
     caption,
     forceDocument: true,
@@ -187,16 +277,18 @@ export async function sendDocument(filePath, fileName, caption, peer = tg.channe
 
 export async function getMessage(msgId, peer = tg.channel) {
   assertReady();
-  const [m] = await tg.client.getMessages(peer, { ids: [msgId] });
+  const target = peer ? await resolvePeer(peer) : tg.channel;
+  const [m] = await tg.client.getMessages(target, { ids: [msgId] });
   if (!m || !m.media) throw err(`message ${msgId} missing in channel (deleted?)`, 502);
   return m;
 }
 
 export async function deleteMessages(ids, peer = tg.channel) {
   if (!tg.ready || !ids.length) return;
+  const target = peer ? await resolvePeer(peer) : tg.channel;
   for (let i = 0; i < ids.length; i += 100) {
     try {
-      await tg.client.deleteMessages(peer, ids.slice(i, i + 100), {
+      await tg.client.deleteMessages(target, ids.slice(i, i + 100), {
         revoke: true,
       });
     } catch (e) {
