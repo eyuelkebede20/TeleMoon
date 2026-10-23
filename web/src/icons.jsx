@@ -80,6 +80,15 @@ export const UsersIcon = (p) => (
 export const MegaphoneIcon = (p) => (
   <S {...p}><path d="M3 11v2a1 1 0 0 0 1 1h2l4 4V7L6 10H4a1 1 0 0 0-1 1z" /><path d="M14 8a4 4 0 0 1 0 8M17 5a8 8 0 0 1 0 14" /></S>
 );
+export const SyncIcon = (p) => (
+  <S {...p}><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2" /></S>
+);
+export const MoveIcon = (p) => (
+  <S {...p}><path d="M5 9l-3 3 3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3M2 12h20M12 2v20" /></S>
+);
+export const LayersIcon = (p) => (
+  <S {...p}><polygon points="12 2 2 7 12 12 22 7 12 2" /><polyline points="2 17 12 22 22 17" /><polyline points="2 12 12 17 22 12" /></S>
+);
 
 export function iconFor(node) {
   if (node.type === "folder") return FolderIcon;

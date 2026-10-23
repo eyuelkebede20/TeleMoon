@@ -39,6 +39,10 @@ export const api = {
   completeUpload: (id) => j("POST", `/api/uploads/${id}/complete`),
   abortUpload: (id) => j("DELETE", `/api/uploads/${id}`),
   share: (id) => j("POST", `/api/nodes/${id}/share`),
+  syncTelegram: (limit) => j("POST", "/api/tg/sync", { limit }),
+  autoOrganize: (folderId) => j("POST", `/api/folders/${folderId}/auto-organize`),
+  folderTree: () => j("GET", "/api/folders/tree"),
+  batchMove: (ids, targetParentId) => j("POST", "/api/nodes/move", { ids, targetParentId }),
   fileUrl: (id, dl = false) =>
     `/api/files/${id}/content?t=${encodeURIComponent(token.get())}${dl ? "&dl=1" : ""}`,
   folderZipUrl: (id) => `/api/folders/${id}/download?t=${encodeURIComponent(token.get())}`,
