@@ -141,8 +141,21 @@ export async function resolvePeer(refOrEntity) {
   if (!tg.client) throw err("Telegram offline", 503);
   if (!refOrEntity) return tg.channel;
   if (typeof refOrEntity === "object" && refOrEntity.className) return refOrEntity;
+
   const r = String(refOrEntity).trim();
-  return await tg.client.getEntity(/^-?\d+$/.test(r) ? bigInt(r) : r.startsWith("@") ? r : `@${r}`);
+  if (tg.channel) {
+    const chanIdStr = tg.channel.id.toString();
+    const cleanR = r.replace(/^-100/, "");
+    if (cleanR === chanIdStr || r === tg.channel.username || (r.startsWith("@") && r.slice(1) === tg.channel.username)) {
+      return tg.channel;
+    }
+  }
+
+  let targetId = r;
+  if (!targetId.startsWith("@") && !targetId.startsWith("-100") && /^\d+$/.test(targetId)) {
+    targetId = `-100${targetId}`;
+  }
+  return await tg.client.getEntity(/^-?\d+$/.test(targetId) ? bigInt(targetId) : targetId.startsWith("@") ? targetId : `@${targetId}`);
 }
 
 /**

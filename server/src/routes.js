@@ -2,6 +2,7 @@ import { Router } from "express";
 import fs from "node:fs";
 import fsp from "node:fs/promises";
 import path from "node:path";
+import crypto from "node:crypto";
 import { pipeline } from "node:stream/promises";
 import { once } from "node:events";
 import { createRequire } from "node:module";
@@ -9,12 +10,18 @@ const require = createRequire(import.meta.url);
 const archiver = require("archiver");
 import bcrypt from "bcryptjs";
 import bigInt from "big-integer";
+import jwt from "jsonwebtoken";
 import { cfg } from "./config.js";
 import {
   db, q, now, uid, getNode, breadcrumb, children, subtreeIds,
-  isAncestor, uniqueName, createFileNode, createShare, getShare,
+  isAncestor, uniqueName, createFileNode, createFolderNode,
+  trashNode, restoreNode, updateNode, getDelta, getSnapshot,
+  getFileVersions, getTrash, findVerifiedBlob, registerDevice,
+  updateDeviceCursor, getDevices, revokeDevice, createSSETicket,
+  verifyAndConsumeSSETicket, createShare, getShare,
 } from "./db.js";
 import { sign, auth } from "./auth.js";
+import { addSSEClient, emitSyncChange } from "./sync.js";
 import {
   tg, sendDocument, deleteMessages, streamRange, connectByLink, listDialogs, syncChannelHistory,
 } from "./telegram.js";
@@ -23,9 +30,19 @@ export const api = Router();
 const bad = (res, code, error) => res.status(code).json({ error });
 
 function getUserPeer(userId) {
+  if (!userId) {
+    if (tg.channel) return tg.channel;
+    throw new Error("No Telegram channel connected");
+  }
   const u = q(`SELECT channel_id FROM users WHERE id=?`).get(userId);
-  if (!u || !u.channel_id) throw new Error("No Telegram channel connected");
+  if (!u || !u.channel_id) {
+    if (tg.channel) return tg.channel;
+    throw new Error("No Telegram channel connected");
+  }
   let cid = String(u.channel_id).trim();
+  if (!cid.startsWith("@") && !cid.startsWith("-100") && /^\d+$/.test(cid)) {
+    cid = `-100${cid}`;
+  }
   if (/^-?\d+$/.test(cid)) return bigInt(cid);
   return cid;
 }
@@ -44,8 +61,6 @@ api.get("/status", (_req, res) => {
 });
 
 /* ------------------------------------------------------------------ auth */
-// One door, no signup: a known @handle signs in, an unknown one is claimed
-// on the spot (invite-gated for everyone after the first user, if set).
 
 api.post("/auth/enter", async (req, res) => {
   const { password } = req.body || {};
@@ -68,6 +83,12 @@ api.post("/auth/enter", async (req, res) => {
   res.json({ token: sign(u), user: { id: u.id, handle, telegram_id: u.telegram_id }, created: true });
 });
 
+api.get("/auth/me", auth, (req, res) => {
+  const user = q(`SELECT id, handle, channel_id, telegram_id, created_at FROM users WHERE id=?`).get(req.user.id);
+  if (!user) return bad(res, 404, "User not found");
+  res.json({ user });
+});
+
 /* ------------------------------------------------------- storage linking */
 
 api.get("/tg/dialogs", auth, async (_req, res) => {
@@ -82,14 +103,13 @@ api.post("/user/channel", auth, async (req, res) => {
   let { channel_id } = req.body;
   if (!channel_id) return bad(res, 400, "channel_id required");
   channel_id = String(channel_id).trim();
-  
+
   if (channel_id.includes("t.me") || channel_id.includes("telegram.me")) {
     return bad(res, 400, "Please paste the channel ID (e.g. -100...) or @username, not an invite link.");
   }
-  
-  // Auto-prefix -100 for raw IDs
+
   if (/^\d{10,}$/.test(channel_id)) channel_id = `-100${channel_id}`;
-  
+
   q(`UPDATE users SET channel_id=? WHERE id=?`).run(channel_id, req.user.id);
   res.json({ ok: true });
 });
@@ -98,7 +118,11 @@ api.post("/tg/connect", auth, async (req, res) => {
   try {
     const channel = await connectByLink(req.body?.link);
     if (channel?.id) {
-      q(`UPDATE users SET channel_id=? WHERE id=?`).run(channel.id, req.user.id);
+      let cid = String(channel.id).trim();
+      if (!cid.startsWith("@") && !cid.startsWith("-100") && /^\d+$/.test(cid)) {
+        cid = `-100${cid}`;
+      }
+      q(`UPDATE users SET channel_id=? WHERE id=?`).run(cid, req.user.id);
     }
     res.json(channel);
   } catch (e) {
@@ -122,72 +146,189 @@ api.post("/tg/sync", auth, async (req, res) => {
   }
 });
 
-/* ------------------------------------------------------ virtual filesystem */
+/* ----------------------------------------------------- sync & delta feed */
+
+api.get("/sync/delta", auth, (req, res) => {
+  const cursor = Number(req.query.cursor) || 0;
+  const limit = Number(req.query.limit) || 500;
+  const result = getDelta({ userId: req.user.id, cursor, limit });
+
+  // Update device tracking if header is present
+  const deviceId = req.headers["x-device-id"];
+  if (deviceId && result.cursor) {
+    updateDeviceCursor(deviceId, result.cursor);
+  }
+
+  res.json(result);
+});
+
+api.get("/sync/snapshot", auth, (req, res) => {
+  const afterNodeId = req.query.after || null;
+  const limit = Number(req.query.limit) || 500;
+  const result = getSnapshot({ userId: req.user.id, afterNodeId, limit });
+  res.json(result);
+});
+
+api.post("/sync/events/ticket", auth, (req, res) => {
+  const ticket = createSSETicket(req.user.id);
+  res.json({ ticket });
+});
+
+api.get("/sync/events", (req, res) => {
+  let userId = null;
+
+  // Ticket auth for browsers
+  if (req.query.ticket) {
+    userId = verifyAndConsumeSSETicket(req.query.ticket);
+  }
+
+  // Header or query JWT auth for native clients
+  if (!userId) {
+    const raw = req.headers.authorization?.replace(/^Bearer\s+/i, "") || req.query.t;
+    if (raw) {
+      try {
+        const decoded = jwt.verify(raw, cfg.jwtSecret);
+        userId = decoded.id;
+      } catch (_) {}
+    }
+  }
+
+  if (!userId) {
+    return res.status(401).send("Unauthorized");
+  }
+
+  res.setHeader("Content-Type", "text/event-stream");
+  res.setHeader("Cache-Control", "no-cache");
+  res.setHeader("Connection", "keep-alive");
+  res.setHeader("X-Accel-Buffering", "no");
+  res.flushHeaders?.();
+
+  addSSEClient(userId, res);
+
+  // Send initial connected hint
+  res.write(`: connected\n\n`);
+});
+
+/* --------------------------------------------------------------- devices */
+
+api.post("/devices", auth, (req, res) => {
+  const { id, name, platform, appVersion } = req.body || {};
+  const dev = registerDevice({
+    id,
+    userId: req.user.id,
+    name,
+    platform,
+    appVersion,
+  });
+  res.json({ device: dev });
+});
+
+api.get("/devices", auth, (req, res) => {
+  res.json({ devices: getDevices(req.user.id) });
+});
+
+api.delete("/devices/:id", auth, (req, res) => {
+  res.json(revokeDevice(req.params.id, req.user.id));
+});
+
+/* ---------------------------------------------------- virtual filesystem */
 
 api.get("/nodes/:id/children", auth, (req, res) => {
   const folder = getNode(req.params.id);
-  if (!folder || folder.type !== "folder") return bad(res, 404, "folder not found");
+  if (!folder || folder.type !== "folder" || folder.deleted_at)
+    return bad(res, 404, "folder not found");
   res.json({ folder, breadcrumb: breadcrumb(folder.id), children: children(folder.id, req.user.id) });
 });
 
 api.post("/folders", auth, (req, res) => {
   const { parentId, name } = req.body || {};
   const parent = getNode(parentId);
-  if (!parent || parent.type !== "folder") return bad(res, 404, "parent not found");
+  if (!parent || parent.type !== "folder" || parent.deleted_at)
+    return bad(res, 404, "parent not found");
   const clean = String(name || "").trim().replace(/[/\\]/g, "-");
   if (!clean) return bad(res, 400, "name required");
-  const id = uid();
-  q(`INSERT INTO nodes(id,parent_id,name,type,size,owner_id,created_at,updated_at)
-     VALUES (?,?,?,?,0,?,?,?)`)
-    .run(id, parentId, uniqueName(parentId, clean, req.user.id), "folder", req.user.id, now(), now());
-  res.json(getNode(id));
+
+  const deviceId = req.headers["x-device-id"] || req.body?.deviceId || null;
+  const { node, cursor } = createFolderNode({
+    parentId,
+    name: clean,
+    ownerId: req.user.id,
+    deviceId,
+  });
+
+  emitSyncChange(req.user.id, cursor);
+  res.json(node);
 });
 
 api.patch("/nodes/:id", auth, (req, res) => {
-  const node = getNode(req.params.id);
-  if (!node || node.id === "root") return bad(res, 404, "not found");
   const { name, parentId } = req.body || {};
+  const ifMatch = req.headers["if-match"] ? Number(req.headers["if-match"]) : null;
+  const deviceId = req.headers["x-device-id"] || req.body?.deviceId || null;
 
-  if (parentId !== undefined && parentId !== node.parent_id) {
-    const target = getNode(parentId);
-    if (!target || target.type !== "folder") return bad(res, 404, "target folder not found");
-    if (node.type === "folder" && isAncestor(node.id, target.id))
-      return bad(res, 400, "cannot move a folder into itself");
-    q(`UPDATE nodes SET parent_id=?, name=?, updated_at=? WHERE id=?`)
-      .run(target.id, uniqueName(target.id, node.name, req.user.id), now(), node.id);
+  try {
+    const { node, cursor } = updateNode({
+      id: req.params.id,
+      name,
+      parentId,
+      ownerId: req.user.id,
+      deviceId,
+      ifMatchVersion: ifMatch,
+    });
+    emitSyncChange(req.user.id, cursor);
+    res.json(node);
+  } catch (e) {
+    if (e.code === "VERSION_CONFLICT") {
+      return res.status(409).json({ error: { code: e.code, message: e.message, current: e.current } });
+    }
+    bad(res, e.status || 500, e.message);
   }
-  if (name !== undefined) {
-    const clean = String(name).trim().replace(/[/\\]/g, "-");
-    if (!clean) return bad(res, 400, "name required");
-    const fresh = getNode(node.id);
-    q(`UPDATE nodes SET name=?, updated_at=? WHERE id=?`)
-      .run(uniqueName(fresh.parent_id, clean, req.user.id), now(), node.id);
-  }
-  res.json(getNode(node.id));
 });
 
-// Permanent delete: DB rows + the backing Telegram messages.
-api.delete("/nodes/:id", auth, async (req, res) => {
-  const node = getNode(req.params.id);
-  if (!node || node.id === "root") return bad(res, 404, "not found");
-  const ids = subtreeIds(node.id);
-  const ph = ids.map(() => "?").join(",");
-  const msgIds = q(`SELECT msg_id FROM chunks WHERE file_id IN (${ph})`)
-    .all(...ids).map((r) => r.msg_id);
-  db.transaction(() => {
-    q(`DELETE FROM chunks WHERE file_id IN (${ph})`).run(...ids);
-    q(`DELETE FROM nodes WHERE id IN (${ph})`).run(...ids);
-  })();
-  deleteMessages(msgIds); // fire-and-forget, batched
-  res.json({ ok: true, removed: ids.length, telegramMessages: msgIds.length });
+// Soft delete to Trash
+api.delete("/nodes/:id", auth, (req, res) => {
+  const ifMatch = req.headers["if-match"] ? Number(req.headers["if-match"]) : null;
+  const deviceId = req.headers["x-device-id"] || null;
+
+  try {
+    const { trashed, cursor } = trashNode(req.params.id, req.user.id, deviceId, ifMatch);
+    emitSyncChange(req.user.id, cursor);
+    res.json({ ok: true, trashed, cursor });
+  } catch (e) {
+    if (e.code === "VERSION_CONFLICT") {
+      return res.status(409).json({ error: { code: e.code, message: e.message, current: e.current } });
+    }
+    bad(res, e.status || 500, e.message);
+  }
+});
+
+// Restore from Trash
+api.post("/nodes/:id/restore", auth, (req, res) => {
+  const deviceId = req.headers["x-device-id"] || req.body?.deviceId || null;
+  try {
+    const { node, cursor } = restoreNode(req.params.id, req.user.id, deviceId);
+    emitSyncChange(req.user.id, cursor);
+    res.json(node);
+  } catch (e) {
+    bad(res, e.status || 500, e.message);
+  }
+});
+
+// Trash view
+api.get("/trash", auth, (req, res) => {
+  res.json({ trash: getTrash(req.user.id) });
+});
+
+// Version history
+api.get("/nodes/:id/versions", auth, (req, res) => {
+  res.json({ versions: getFileVersions(req.params.id) });
 });
 
 api.get("/search", auth, (req, res) => {
   const term = String(req.query.q || "").trim();
   if (!term) return res.json({ results: [] });
   const results = q(
-    `SELECT id,parent_id,name,type,size,mime,updated_at FROM nodes
-     WHERE name LIKE ? AND id != 'root' AND (owner_id=? OR owner_id IS NULL)
+    `SELECT id,parent_id,name,type,size,mime,hash,version,updated_at FROM nodes
+     WHERE name LIKE ? AND id != 'root' AND deleted_at IS NULL AND (owner_id=? OR owner_id IS NULL)
      ORDER BY type='folder' DESC, name COLLATE NOCASE LIMIT 100`
   ).all(`%${term}%`, req.user.id);
   res.json({ results });
@@ -195,7 +336,7 @@ api.get("/search", auth, (req, res) => {
 
 api.post("/nodes/:id/share", auth, (req, res) => {
   const node = getNode(req.params.id);
-  if (!node || node.type !== "file") return bad(res, 404, "file not found");
+  if (!node || node.type !== "file" || node.deleted_at) return bad(res, 404, "file not found");
   const shareId = createShare(node.id);
   res.json({ shareId });
 });
@@ -203,7 +344,7 @@ api.post("/nodes/:id/share", auth, (req, res) => {
 api.get("/folders/tree", auth, (req, res) => {
   const folders = q(
     `SELECT id, parent_id, name FROM nodes
-     WHERE type='folder' AND (owner_id=? OR owner_id IS NULL)
+     WHERE type='folder' AND deleted_at IS NULL AND (owner_id=? OR owner_id IS NULL)
      ORDER BY name COLLATE NOCASE`
   ).all(req.user.id);
   res.json({ folders });
@@ -213,102 +354,112 @@ api.post("/nodes/move", auth, (req, res) => {
   const { ids, targetParentId } = req.body || {};
   if (!Array.isArray(ids) || !ids.length) return bad(res, 400, "ids array required");
   const target = getNode(targetParentId);
-  if (!target || target.type !== "folder") return bad(res, 404, "target folder not found");
+  if (!target || target.type !== "folder" || target.deleted_at)
+    return bad(res, 404, "target folder not found");
 
   let moved = 0;
-  db.transaction(() => {
-    for (const id of ids) {
-      const node = getNode(id);
-      if (!node || node.id === "root" || node.parent_id === target.id) continue;
-      if (node.type === "folder" && isAncestor(node.id, target.id)) continue;
-      q(`UPDATE nodes SET parent_id=?, name=?, updated_at=? WHERE id=?`)
-        .run(target.id, uniqueName(target.id, node.name, req.user.id), now(), node.id);
+  let lastCursor = 0;
+  const deviceId = req.headers["x-device-id"] || null;
+
+  for (const id of ids) {
+    try {
+      const { cursor } = updateNode({
+        id,
+        parentId: target.id,
+        ownerId: req.user.id,
+        deviceId,
+      });
       moved++;
-    }
-  })();
+      lastCursor = cursor;
+    } catch (_) {}
+  }
+
+  if (moved > 0 && lastCursor) {
+    emitSyncChange(req.user.id, lastCursor);
+  }
   res.json({ ok: true, moved });
 });
 
-api.post("/folders/:id/auto-organize", auth, (req, res) => {
-  const folder = getNode(req.params.id);
-  if (!folder || folder.type !== "folder") return bad(res, 404, "folder not found");
-
-  const folderChildren = children(folder.id, req.user.id);
-  const files = folderChildren.filter((c) => c.type === "file");
-  if (files.length === 0) {
-    return res.json({ ok: true, organized: 0, message: "No files to organize in this folder" });
-  }
-
-  const CATEGORIES = {
-    Documents: [".pdf", ".doc", ".docx", ".txt", ".rtf", ".odt", ".xls", ".xlsx", ".ppt", ".pptx", ".csv", ".epub", ".pages", ".key"],
-    Images: [".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".bmp", ".tiff", ".ico", ".psd"],
-    Videos: [".mp4", ".mkv", ".mov", ".avi", ".webm", ".flv", ".wmv", ".m4v", ".3gp"],
-    Audio: [".mp3", ".wav", ".flac", ".ogg", ".m4a", ".aac", ".wma", ".opus"],
-    Archives: [".zip", ".rar", ".7z", ".tar", ".gz", ".bz2", ".xz", ".iso", ".dmg"],
-    Code: [".js", ".jsx", ".ts", ".tsx", ".py", ".html", ".css", ".json", ".xml", ".yaml", ".yml", ".md", ".sh", ".c", ".cpp", ".rs", ".go", ".java", ".sql"],
-  };
-
-  const getCategory = (file) => {
-    const ext = path.extname(file.name || "").toLowerCase();
-    for (const [cat, exts] of Object.entries(CATEGORIES)) {
-      if (exts.includes(ext)) return cat;
-    }
-    if (file.mime?.startsWith("image/")) return "Images";
-    if (file.mime?.startsWith("video/")) return "Videos";
-    if (file.mime?.startsWith("audio/")) return "Audio";
-    if (file.mime?.includes("pdf") || file.mime?.includes("document") || file.mime?.includes("text/")) return "Documents";
-    if (file.mime?.includes("zip") || file.mime?.includes("compressed") || file.mime?.includes("tar")) return "Archives";
-    return "Other";
-  };
-
-  const existingSubfolders = folderChildren.filter((c) => c.type === "folder");
-  const subfolderMap = new Map();
-  for (const sf of existingSubfolders) {
-    subfolderMap.set(sf.name, sf.id);
-  }
-
-  const getOrCreateSubfolder = (name) => {
-    if (subfolderMap.has(name)) return subfolderMap.get(name);
-    const id = uid();
-    const t = now();
-    q(`INSERT INTO nodes(id,parent_id,name,type,size,owner_id,created_at,updated_at)
-       VALUES (?,?,?,?,0,?,?,?)`).run(
-      id, folder.id, uniqueName(folder.id, name, req.user.id), "folder", req.user.id, t, t
-    );
-    subfolderMap.set(name, id);
-    return id;
-  };
-
-  let organized = 0;
-  db.transaction(() => {
-    for (const file of files) {
-      const cat = getCategory(file);
-      const targetFolderId = getOrCreateSubfolder(cat);
-      q(`UPDATE nodes SET parent_id=?, name=?, updated_at=? WHERE id=?`)
-        .run(targetFolderId, uniqueName(targetFolderId, file.name, req.user.id), now(), file.id);
-      organized++;
-    }
-  })();
-
-  res.json({ ok: true, organized, categories: Array.from(subfolderMap.keys()) });
-});
-
 /* -------------------------------------------------------- chunked uploads */
-// Browser slices the File into <= chunkBytes parts. Each part is PUT as a
-// raw body -> temp file on disk -> one Telegram message. `complete` stitches
-// the message ids into a file node. Memory use stays flat regardless of size.
 
 api.post("/uploads", auth, (req, res) => {
-  const { name, size, mime, parentId } = req.body || {};
+  const {
+    name, size, mime, parentId, hash, clientModifiedAt,
+    deviceId, replaceNodeId, baseVersion, onNameConflict,
+  } = req.body || {};
+
   const parent = getNode(parentId);
-  if (!parent || parent.type !== "folder") return bad(res, 404, "parent not found");
+  if (!parent || parent.type !== "folder" || parent.deleted_at)
+    return bad(res, 404, "parent not found");
   if (!name || !(Number.isFinite(size) && size >= 0))
     return bad(res, 400, "name and size required");
+
+  // Check version conflict early if replacing a node
+  if (replaceNodeId && baseVersion !== undefined && baseVersion !== null) {
+    const existing = getNode(replaceNodeId);
+    if (!existing) return bad(res, 404, "target file to replace not found");
+    if (existing.version !== Number(baseVersion)) {
+      return res.status(409).json({
+        error: {
+          code: "VERSION_CONFLICT",
+          message: "Node changed since baseVersion",
+          current: { version: existing.version, hash: existing.hash },
+        },
+      });
+    }
+  }
+
+  // Instant Deduplication check (per-user, verified blob match)
+  if (hash && size > 0) {
+    const verifiedBlob = findVerifiedBlob(req.user.id, hash, size);
+    if (verifiedBlob) {
+      try {
+        const { node, cursor } = createFileNode({
+          parentId,
+          name,
+          size,
+          mime,
+          ownerId: req.user.id,
+          hash,
+          clientModifiedAt,
+          deviceId: deviceId || req.headers["x-device-id"] || null,
+          replaceNodeId,
+          baseVersion,
+          blobId: verifiedBlob.id,
+        });
+
+        emitSyncChange(req.user.id, cursor);
+        return res.json({ dedup: true, node, cursor });
+      } catch (e) {
+        if (e.code === "VERSION_CONFLICT") {
+          return res.status(409).json({ error: { code: e.code, message: e.message, current: e.current } });
+        }
+        return bad(res, 500, e.message);
+      }
+    }
+  }
+
   const id = uid();
-  q(`INSERT INTO uploads(id,name,parent_id,size,mime,chunk_size,user_id,created_at)
-     VALUES (?,?,?,?,?,?,?,?)`)
-    .run(id, String(name), parentId, size, mime || null, cfg.chunkBytes, req.user.id, now());
-  res.json({ id, chunkSize: cfg.chunkBytes });
+  q(`INSERT INTO uploads(id,name,parent_id,size,mime,chunk_size,user_id,hash,base_version,replace_node_id,on_name_conflict,client_modified_at,device_id,created_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)`)
+    .run(
+      id,
+      String(name),
+      parentId,
+      size,
+      mime || null,
+      cfg.chunkBytes,
+      req.user.id,
+      hash || null,
+      baseVersion !== undefined ? Number(baseVersion) : null,
+      replaceNodeId || null,
+      onNameConflict || "rename",
+      clientModifiedAt ? Number(clientModifiedAt) : null,
+      deviceId || req.headers["x-device-id"] || null,
+      now()
+    );
+
+  res.json({ id, chunkSize: cfg.chunkBytes, dedup: false });
 });
 
 api.put("/uploads/:id/parts/:idx", auth, async (req, res) => {
@@ -322,13 +473,29 @@ api.put("/uploads/:id/parts/:idx", auth, async (req, res) => {
   const tmp = path.join(cfg.dataDir, "tmp", `${up.id}.${idx}`);
   try {
     let received = 0;
-    req.on("data", (d) => (received += d.length));
+    const hasher = crypto.createHash("sha256");
+
+    req.on("data", (d) => {
+      received += d.length;
+      hasher.update(d);
+    });
+
     await pipeline(req, fs.createWriteStream(tmp));
-    if (received === 0) return bad(res, 400, "empty part");
+    if (received === 0 && up.size > 0) return bad(res, 400, "empty part");
+
+    const computedPartHash = hasher.digest("hex");
+    const expectedPartHash = req.headers["x-part-sha256"] || req.headers["x-part-hash"];
+
+    if (expectedPartHash && expectedPartHash.toLowerCase() !== computedPartHash.toLowerCase()) {
+      await fsp.rm(tmp, { force: true });
+      return res.status(422).json({
+        error: { code: "HASH_MISMATCH", message: "Part SHA-256 mismatch", computed: computedPartHash },
+      });
+    }
 
     let peer;
     try { peer = getUserPeer(up.user_id); } catch(e) {}
-    
+
     const partName =
       totalParts > 1
         ? `${up.name}.part${String(idx + 1).padStart(3, "0")}`
@@ -337,12 +504,13 @@ api.put("/uploads/:id/parts/:idx", auth, async (req, res) => {
     const msgId = await sendDocument(tmp, partName, caption, peer);
 
     // Retried part? Drop the superseded Telegram message.
-    const prev = q(`SELECT msg_id FROM upload_parts WHERE upload_id=? AND idx=?`)
-      .get(up.id, idx);
+    const prev = q(`SELECT msg_id FROM upload_parts WHERE upload_id=? AND idx=?`).get(up.id, idx);
     if (prev) deleteMessages([prev.msg_id], peer);
-    q(`INSERT OR REPLACE INTO upload_parts(upload_id,idx,msg_id,size) VALUES (?,?,?,?)`)
-      .run(up.id, idx, msgId, received);
-    res.json({ msgId, size: received });
+
+    q(`INSERT OR REPLACE INTO upload_parts(upload_id,idx,msg_id,size,part_hash) VALUES (?,?,?,?,?)`)
+      .run(up.id, idx, msgId, received, computedPartHash);
+
+    res.json({ msgId, size: received, partHash: computedPartHash });
   } catch (e) {
     console.error("[upload part]", e);
     bad(res, e.status || 500, e.message);
@@ -351,31 +519,63 @@ api.put("/uploads/:id/parts/:idx", auth, async (req, res) => {
   }
 });
 
+api.get("/uploads/:id", auth, (req, res) => {
+  const up = q(`SELECT * FROM uploads WHERE id=?`).get(req.params.id);
+  if (!up) return bad(res, 404, "upload not found");
+  const parts = q(`SELECT idx, msg_id, size, part_hash FROM upload_parts WHERE upload_id=? ORDER BY idx`).all(up.id);
+  res.json({
+    uploadId: up.id,
+    size: up.size,
+    chunkSize: up.chunk_size,
+    parts,
+    expectedParts: Math.max(1, Math.ceil(up.size / up.chunk_size)),
+  });
+});
+
 api.post("/uploads/:id/complete", auth, (req, res) => {
   const up = q(`SELECT * FROM uploads WHERE id=?`).get(req.params.id);
   if (!up) return bad(res, 404, "upload not found");
   const parts = q(`SELECT * FROM upload_parts WHERE upload_id=? ORDER BY idx`).all(up.id);
   const expected = up.size === 0 ? 0 : Math.ceil(up.size / up.chunk_size);
   const total = parts.reduce((s, p) => s + p.size, 0);
+
   if (parts.length !== expected || total !== up.size)
     return bad(res, 400, `incomplete upload: ${parts.length}/${expected} parts, ${total}/${up.size} bytes`);
 
-  const node = createFileNode({
-    parentId: up.parent_id, name: up.name, size: up.size,
-    mime: up.mime, ownerId: up.user_id, parts,
-  });
-  db.transaction(() => {
-    q(`DELETE FROM upload_parts WHERE upload_id=?`).run(up.id);
-    q(`DELETE FROM uploads WHERE id=?`).run(up.id);
-  })();
-  res.json(node);
+  try {
+    const { node, cursor } = createFileNode({
+      parentId: up.parent_id,
+      name: up.name,
+      size: up.size,
+      mime: up.mime,
+      ownerId: up.user_id,
+      parts,
+      hash: up.hash,
+      clientModifiedAt: up.client_modified_at,
+      deviceId: up.device_id,
+      replaceNodeId: up.replace_node_id,
+      baseVersion: up.base_version,
+    });
+
+    db.transaction(() => {
+      q(`DELETE FROM upload_parts WHERE upload_id=?`).run(up.id);
+      q(`DELETE FROM uploads WHERE id=?`).run(up.id);
+    })();
+
+    emitSyncChange(up.user_id, cursor);
+    res.json(node);
+  } catch (e) {
+    if (e.code === "VERSION_CONFLICT") {
+      return res.status(409).json({ error: { code: e.code, message: e.message, current: e.current } });
+    }
+    bad(res, 500, e.message);
+  }
 });
 
 api.delete("/uploads/:id", auth, (req, res) => {
   const up = q(`SELECT * FROM uploads WHERE id=?`).get(req.params.id);
   if (!up) return bad(res, 404, "upload not found");
-  const msgIds = q(`SELECT msg_id FROM upload_parts WHERE upload_id=?`)
-    .all(up.id).map((r) => r.msg_id);
+  const msgIds = q(`SELECT msg_id FROM upload_parts WHERE upload_id=?`).all(up.id).map((r) => r.msg_id);
   db.transaction(() => {
     q(`DELETE FROM upload_parts WHERE upload_id=?`).run(up.id);
     q(`DELETE FROM uploads WHERE id=?`).run(up.id);
@@ -387,12 +587,28 @@ api.delete("/uploads/:id", auth, (req, res) => {
 });
 
 /* ------------------------------------------------------- ranged downloads */
-// Full HTTP Range support across chunk boundaries -> video seeking works.
 
 async function serveNodeContent(req, res, node) {
-  if (!node || node.type !== "file") return bad(res, 404, "file not found");
-  const chunks = q(`SELECT * FROM chunks WHERE file_id=? ORDER BY idx`).all(node.id);
+  if (!node || node.type !== "file" || node.deleted_at) return bad(res, 404, "file not found");
+  if (!tg.ready) return bad(res, 503, tg.error || "Telegram storage not connected");
+
+  let chunks = q(`SELECT * FROM chunks WHERE file_id=? ORDER BY idx`).all(node.id);
+  if (chunks.length === 0 && node.blob_id) {
+    chunks = q(`SELECT * FROM chunks WHERE blob_id=? ORDER BY idx`).all(node.blob_id);
+  }
   const total = node.size;
+  if (total > 0 && chunks.length === 0) {
+    return bad(res, 502, "File chunks not found");
+  }
+
+  let peer = tg.channel;
+  if (node.owner_id) {
+    try {
+      peer = await resolvePeer(getUserPeer(node.owner_id));
+    } catch (_) {
+      peer = tg.channel;
+    }
+  }
 
   let start = 0, end = Math.max(total - 1, 0), status = 200;
   const range = req.headers.range;
@@ -408,13 +624,16 @@ async function serveNodeContent(req, res, node) {
     }
   }
 
+  const safeAscii = (node.name || "download").replace(/[^\x20-\x7E]/g, "_").replace(/["\\]/g, "_");
+  const encodedName = encodeURIComponent(node.name || "download");
+
   res.status(status).set({
     "Accept-Ranges": "bytes",
     "Content-Type": node.mime || "application/octet-stream",
     "Content-Length": String(total === 0 ? 0 : end - start + 1),
     "Content-Disposition":
       `${req.query.dl === "1" ? "attachment" : "inline"}; ` +
-      `filename*=UTF-8''${encodeURIComponent(node.name)}`,
+      `filename="${safeAscii}"; filename*=UTF-8''${encodedName}`,
   });
   if (status === 206) res.set("Content-Range", `bytes ${start}-${end}/${total}`);
   if (req.method === "HEAD" || total === 0) return res.end();
@@ -428,10 +647,6 @@ async function serveNodeContent(req, res, node) {
       pos += c.size;
       if (cEnd < start) continue;
       if (cStart > end) break;
-      let peer;
-      if (node.owner_id) {
-        try { peer = getUserPeer(node.owner_id); } catch (e) {}
-      }
       await streamRange(
         c.msg_id,
         Math.max(start - cStart, 0),
@@ -445,10 +660,13 @@ async function serveNodeContent(req, res, node) {
       );
       if (closed) break;
     }
+    if (!closed) res.end();
   } catch (e) {
     console.error("[download]", e.message);
+    if (!res.writableEnded) {
+      res.destroy(e);
+    }
   }
-  res.end();
 }
 
 api.get("/files/:id/content", auth, async (req, res) => {
@@ -463,15 +681,29 @@ api.get("/share/:id/content", async (req, res) => {
 
 api.get("/folders/:id/download", auth, async (req, res) => {
   const rootFolder = getNode(req.params.id);
-  if (!rootFolder || rootFolder.type !== "folder") return bad(res, 404, "folder not found");
-  
+  if (!rootFolder || rootFolder.type !== "folder" || rootFolder.deleted_at)
+    return bad(res, 404, "folder not found");
+  if (!tg.ready) return bad(res, 503, tg.error || "Telegram storage not connected");
+
+  let peer = tg.channel;
+  if (rootFolder.owner_id) {
+    try {
+      peer = await resolvePeer(getUserPeer(rootFolder.owner_id));
+    } catch (_) {
+      peer = tg.channel;
+    }
+  }
+
+  const safeAscii = (rootFolder.name || "folder").replace(/[^\x20-\x7E]/g, "_").replace(/["\\]/g, "_");
+  const encodedName = encodeURIComponent(rootFolder.name || "folder");
+
   res.status(200).set({
     "Content-Type": "application/zip",
-    "Content-Disposition": `attachment; filename*=UTF-8''${encodeURIComponent(rootFolder.name)}.zip`,
+    "Content-Disposition": `attachment; filename="${safeAscii}.zip"; filename*=UTF-8''${encodedName}.zip`,
   });
 
   const archive = new archiver.ZipArchive({ zlib: { level: 1 } });
-  archive.on('error', (err) => console.error("[zip error]", err));
+  archive.on("error", (err) => console.error("[zip error]", err));
   archive.pipe(res);
 
   let closed = false;
@@ -483,25 +715,41 @@ api.get("/folders/:id/download", auth, async (req, res) => {
     for (const child of folderChildren) {
       if (closed) return;
       const childPath = basePath ? `${basePath}/${child.name}` : child.name;
-      
+
       if (child.type === "folder") {
         archive.append("", { name: childPath + "/" });
         await addFolder(child.id, childPath);
       } else {
-        const fileChunks = q(`SELECT * FROM chunks WHERE file_id=? ORDER BY idx`).all(child.id);
+        let fileChunks = q(`SELECT * FROM chunks WHERE file_id=? ORDER BY idx`).all(child.id);
+        if (fileChunks.length === 0 && child.blob_id) {
+          fileChunks = q(`SELECT * FROM chunks WHERE blob_id=? ORDER BY idx`).all(child.blob_id);
+        }
         const { PassThrough } = await import("node:stream");
         const pt = new PassThrough();
-        
+
         archive.append(pt, { name: childPath });
-        
+
+        let filePeer = peer;
+        if (child.owner_id && child.owner_id !== rootFolder.owner_id) {
+          try {
+            filePeer = await resolvePeer(getUserPeer(child.owner_id));
+          } catch (_) {}
+        }
+
         try {
           for (const c of fileChunks) {
             if (closed) break;
             if (c.size > 0) {
-              await streamRange(c.msg_id, 0, c.size - 1, async (buf) => {
-                if (!pt.write(buf)) await once(pt, "drain");
-                return !closed;
-              });
+              await streamRange(
+                c.msg_id,
+                0,
+                c.size - 1,
+                async (buf) => {
+                  if (!pt.write(buf)) await once(pt, "drain");
+                  return !closed;
+                },
+                filePeer
+              );
             }
           }
         } catch (e) {
@@ -518,4 +766,3 @@ api.get("/folders/:id/download", auth, async (req, res) => {
     archive.finalize();
   }
 });
-

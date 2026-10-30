@@ -92,7 +92,7 @@ function ShareModal({ modal, onClose }) {
           </p>
           <div style={{ display: "flex", gap: 8 }}>
             <input readOnly value={modal.url} 
-              style={{ flex: 1, padding: "10px 12px", borderRadius: "8px", border: "1px solid var(--line)", background: "var(--ink-2)", outline: "none", color: "var(--text)", fontFamily: "var(--mono)", fontSize: "0.85rem" }} 
+              style={{ flex: 1, padding: "10px 12px", borderRadius: "14px", border: "1px solid var(--line)", background: "var(--ink-2)", outline: "none", color: "var(--text)", fontFamily: "var(--mono)", fontSize: "0.85rem" }} 
               onClick={e => e.target.select()} />
             <button className="btn btn-moon" onClick={copy}>{copied ? "Copied!" : "Copy"}</button>
           </div>
@@ -145,7 +145,7 @@ function MoveModal({ modal, onClose, onConfirm }) {
                 onChange={(e) => setSelected(e.target.value)}
                 style={{
                   padding: "10px 12px",
-                  borderRadius: "8px",
+                  borderRadius: "14px",
                   border: "1px solid var(--line)",
                   background: "var(--ink-2)",
                   color: "var(--text)",
@@ -185,6 +185,29 @@ export default function Drive({ user, onLogout, onStorage }) {
   const [syncing, setSyncing] = useState(false);
   const [organizing, setOrganizing] = useState(false);
   const [toastMessage, setToastMessage] = useState("");
+  const [trackedIds, setTrackedIds] = useState(() => {
+    try {
+      return JSON.parse(localStorage.getItem("telemoon_tracked_ids") || "[]");
+    } catch (_) {
+      return [];
+    }
+  });
+
+  const toggleTrack = (id, name) => {
+    setTrackedIds((prev) => {
+      const isTracked = prev.includes(id);
+      const next = isTracked ? prev.filter((x) => x !== id) : [...prev, id];
+      try {
+        localStorage.setItem("telemoon_tracked_ids", JSON.stringify(next));
+      } catch (_) {}
+      setToastMessage(
+        isTracked
+          ? `Untracked "${name || 'item'}" (excluded from sync)`
+          : `✓ Now tracking "${name || 'item'}" for sync`
+      );
+      return next;
+    });
+  };
   const [uploads, setUploads] = useState([]); // {key,name,pct,part,parts,status,handle}
   const [preview, setPreview] = useState(null);
   const [status, setStatus] = useState(null);
@@ -456,16 +479,40 @@ export default function Drive({ user, onLogout, onStorage }) {
               onClick={() => setStack(stack.slice(0, i + 1))}>{c.name}</button>
           </span>
         ))}
-        {!searching && items.some((i) => i.type === "file") && (
-          <button
-            className="ghost"
-            style={{ marginLeft: "auto", fontSize: "0.85rem", color: "var(--moon)", display: "flex", alignItems: "center", gap: 6 }}
-            onClick={handleAutoOrganize}
-            disabled={organizing}
-            title="Sort all files in this folder into categorized subfolders (Documents, Images, Videos, Audio, Archives, Code)"
-          >
-            <LayersIcon /> {organizing ? "Organizing…" : "Organize by type"}
-          </button>
+        {!searching && (
+          <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 10 }}>
+            <button
+              className="ghost"
+              style={{
+                fontSize: "0.84rem",
+                color: trackedIds.includes(cwd.id) ? "var(--moon)" : "var(--muted)",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                padding: "4px 12px",
+                borderRadius: "999px",
+                border: `1px solid ${trackedIds.includes(cwd.id) ? "var(--moon-deep)" : "var(--line)"}`,
+                background: trackedIds.includes(cwd.id) ? "var(--panel-2)" : "transparent",
+                fontWeight: trackedIds.includes(cwd.id) ? 600 : 400
+              }}
+              onClick={() => toggleTrack(cwd.id, cwd.name)}
+              title={trackedIds.includes(cwd.id) ? "This folder is tracked for sync (click to untrack)" : "Track this folder for sync"}
+            >
+              <SyncIcon style={{ width: 14, height: 14 }} />
+              {trackedIds.includes(cwd.id) ? "✓ Tracked for sync" : "+ Track this folder"}
+            </button>
+            {items.some((i) => i.type === "file") && (
+              <button
+                className="ghost"
+                style={{ fontSize: "0.85rem", color: "var(--moon)", display: "flex", alignItems: "center", gap: 6 }}
+                onClick={handleAutoOrganize}
+                disabled={organizing}
+                title="Sort all files in this folder into categorized subfolders (Documents, Images, Videos, Audio, Archives, Code)"
+              >
+                <LayersIcon /> {organizing ? "Organizing…" : "Organize by type"}
+              </button>
+            )}
+          </div>
         )}
       </nav>
 
@@ -505,15 +552,33 @@ export default function Drive({ user, onLogout, onStorage }) {
                     )}
                   </div>
                   <div className="card-name" title={n.name}>{n.name}</div>
-                  <div className="card-meta mono dim">
-                    {n.type === "file" ? `${fmtBytes(n.size)} · ` : ""}{fmtDate(n.updated_at)}
+                  <div className="card-meta mono dim" style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                    <span>{n.type === "file" ? `${fmtBytes(n.size)} · ` : ""}{fmtDate(n.updated_at)}</span>
+                    {trackedIds.includes(n.id) && <span className="badge-tracked">TRACKED</span>}
                   </div>
                   <div className="card-acts" onClick={(e) => e.stopPropagation()}>
+                    <button
+                      className="ghost"
+                      style={{ color: trackedIds.includes(n.id) ? "var(--moon)" : undefined }}
+                      onClick={() => toggleTrack(n.id, n.name)}
+                      title={trackedIds.includes(n.id) ? "Tracked for sync (click to untrack)" : "Track for sync"}
+                    >
+                      <SyncIcon />
+                    </button>
                     {n.type === "file" && (
                       <button className="ghost" onClick={() => share(n)} title="Share"><ShareIcon /></button>
                     )}
                     <button className="ghost" onClick={() => setModal({ type: "move", node: n })} title="Move to folder"><MoveIcon /></button>
-                    <a className="ghost" href={n.type === "folder" ? api.folderZipUrl(n.id) : api.fileUrl(n.id, true)} title="Download"><DownloadIcon /></a>
+                    <a
+                      className="ghost"
+                      href={n.type === "folder" ? api.folderZipUrl(n.id) : api.fileUrl(n.id, true)}
+                      download={n.type === "folder" ? `${n.name}.zip` : n.name}
+                      draggable={false}
+                      title="Download"
+                      onClick={(e) => e.stopPropagation()}
+                    >
+                      <DownloadIcon />
+                    </a>
                     <button className="ghost" onClick={() => rename(n)} title="Rename"><EditIcon /></button>
                     <button className="ghost danger" onClick={() => remove(n)} title="Delete"><TrashIcon /></button>
                   </div>
@@ -595,7 +660,15 @@ export default function Drive({ user, onLogout, onStorage }) {
             <header>
               <span className="upname">{preview.name}</span>
               <div>
-                <a className="btn" href={api.fileUrl(preview.id, true)}><DownloadIcon /> Download</a>
+                <a
+                  className="btn"
+                  href={api.fileUrl(preview.id, true)}
+                  download={preview.name}
+                  draggable={false}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <DownloadIcon /> Download
+                </a>
                 <button className="ghost" onClick={() => setPreview(null)} aria-label="Close"><XIcon /></button>
               </div>
             </header>

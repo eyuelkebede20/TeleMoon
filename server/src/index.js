@@ -7,6 +7,7 @@ import { cfg } from "./config.js";
 import "./db.js";
 import { api } from "./routes.js";
 import { initTelegram } from "./telegram.js";
+import { startBackgroundJobs } from "./jobs.js";
 
 const app = express();
 app.use(cors());
@@ -30,6 +31,8 @@ if (fs.existsSync(dist)) {
 app.listen(cfg.port, () =>
   console.log(`TeleMoon server → http://localhost:${cfg.port}`)
 );
+
+startBackgroundJobs();
 
 initTelegram().catch((e) => {
   console.error("[tg] init failed:", e.message);

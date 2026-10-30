@@ -37,7 +37,7 @@ body {
   background-attachment: fixed;
 }
 button, input { font: inherit; color: inherit; }
-a { color: var(--sky); text-decoration: none; }
+a { color: var(--moon-deep); text-decoration: none; }
 :focus-visible { outline: 2px solid var(--moon); outline-offset: 2px; border-radius: 6px; }
 
 .mono { font-family: var(--mono); font-size: 0.82rem; }
@@ -198,6 +198,13 @@ a { color: var(--sky); text-decoration: none; }
 }
 .card.node:hover .card-name { color: var(--moon); }
 .card-meta { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.badge-tracked {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 0.68rem; font-weight: 700; letter-spacing: 0.04em;
+  color: var(--moon); background: var(--panel-2);
+  border: 1px solid var(--moon-deep); border-radius: 6px;
+  padding: 1px 6px;
+}
 .card-acts {
   position: absolute; top: 8px; right: 8px;
   display: flex; gap: 0;
@@ -302,7 +309,7 @@ input:-webkit-autofill:active {
   border: 1px solid var(--moon-deep);
   color: var(--moon);
   padding: 8px 16px;
-  border-radius: 8px;
+  border-radius: 14px;
   font-size: 0.88rem;
   margin: 12px 24px 0;
   display: flex;
