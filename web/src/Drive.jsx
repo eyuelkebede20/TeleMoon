@@ -604,7 +604,7 @@ export default function Drive({ user, onLogout, onStorage, onOpenDrop }) {
                     <span>{n.type === "file" ? `${fmtBytes(n.size)} · ` : ""}{fmtDate(n.updated_at)}</span>
                     {trackedIds.includes(n.id) && <span className="badge-tracked">TRACKED</span>}
                   </div>
-                  <div className="card-acts" onClick={(e) => e.stopPropagation()}>
+                  <div className="card-acts" onClick={(e) => e.stopPropagation()} onDragStart={(e) => e.stopPropagation()}>
                     <button
                       className="ghost"
                       style={{ color: trackedIds.includes(n.id) ? "var(--moon)" : undefined }}
