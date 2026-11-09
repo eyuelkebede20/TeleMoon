@@ -48,7 +48,7 @@ class _ServerConfigDialogState extends State<ServerConfigDialog> {
         side: BorderSide(color: lineColor),
       ),
       child: Container(
-        width: 440,
+        constraints: const BoxConstraints(maxWidth: 440),
         padding: const EdgeInsets.all(24),
         child: Column(
           mainAxisSize: MainAxisSize.min,
@@ -58,15 +58,17 @@ class _ServerConfigDialogState extends State<ServerConfigDialog> {
               children: [
                 Icon(Icons.dns, color: moonColor, size: 22),
                 const SizedBox(width: 10),
-                Text(
-                  'Server Configuration',
-                  style: TextStyle(
-                    fontWeight: FontWeight.w700,
-                    fontSize: 16,
-                    color: isDark ? const Color(0xFFE9ECFA) : const Color(0xFF1C1917),
+                Expanded(
+                  child: Text(
+                    'Server Configuration',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w700,
+                      fontSize: 16,
+                      color: isDark ? const Color(0xFFE9ECFA) : const Color(0xFF1C1917),
+                    ),
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
-                const Spacer(),
                 IconButton(
                   icon: Icon(Icons.close, color: mutedColor, size: 20),
                   padding: EdgeInsets.zero,
@@ -102,22 +104,27 @@ class _ServerConfigDialogState extends State<ServerConfigDialog> {
               ),
             ),
             const SizedBox(height: 20),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                TextButton(
-                  onPressed: _reset,
-                  child: Text('Reset Default', style: TextStyle(color: mutedColor)),
-                ),
-                const SizedBox(width: 10),
-                ElevatedButton(
-                  onPressed: _save,
-                  style: ElevatedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+            Align(
+              alignment: Alignment.centerRight,
+              child: Wrap(
+                alignment: WrapAlignment.end,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  TextButton(
+                    onPressed: _reset,
+                    child: Text('Reset Default', style: TextStyle(color: mutedColor)),
                   ),
-                  child: const Text('Save & Apply', style: TextStyle(fontSize: 13)),
-                ),
-              ],
+                  ElevatedButton(
+                    onPressed: _save,
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
+                    ),
+                    child: const Text('Save & Apply', style: TextStyle(fontSize: 13)),
+                  ),
+                ],
+              ),
             ),
           ],
         ),

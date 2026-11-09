@@ -27,6 +27,13 @@ class SyncDB {
     _db = null;
   }
 
+  Future<void> close() async {
+    if (_db != null && _db!.isOpen) {
+      await _db!.close();
+      _db = null;
+    }
+  }
+
   static void ensureInitialized() {
     if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
       sqfliteFfiInit();
