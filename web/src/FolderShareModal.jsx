@@ -403,8 +403,8 @@ export default function FolderShareModal({ folder, onClose }) {
                         <span style={{ fontSize: "0.85rem", color: "var(--danger)" }}>Delete link?</span>
                         <button
                           type="button"
-                          className="btn"
-                          style={{ background: "var(--danger)", borderColor: "var(--danger)", color: "#000", padding: "4px 10px", fontSize: "0.8rem" }}
+                          className="btn btn-danger"
+                          style={{ padding: "4px 10px", fontSize: "0.8rem" }}
                           onClick={handleDelete}
                           disabled={busy}
                         >

@@ -14,8 +14,10 @@
   --moon: #f0d9a8;
   --moon-deep: #c9a96a;
   --moon-text: #241d0e;
+  --moon-ink: #241d0e;
   --sky: #8fb4ff;
   --danger: #ee8f8f;
+  --danger-ink: #190909;
   --hover-ghost: rgba(255, 255, 255, 0.08);
   --modal-scrim: #05070fd0;
   --dropveil-bg: #0e122085;
@@ -48,8 +50,10 @@
   --moon: #C48722;
   --moon-deep: #966310;
   --moon-text: #FFFFFF;
+  --moon-ink: #FFFFFF;
   --sky: #1D64D8;
   --danger: #DC2626;
+  --danger-ink: #FFFFFF;
   --hover-ghost: rgba(28, 25, 23, 0.06);
   --modal-scrim: rgba(25, 22, 18, 0.45);
   --dropveil-bg: rgba(250, 247, 242, 0.92);
@@ -74,8 +78,12 @@ body {
   transition: background-color 0.2s ease, color 0.2s ease;
 }
 button, input { font: inherit; color: inherit; }
+input { caret-color: var(--moon); }
+input::placeholder { color: var(--muted); opacity: 0.82; }
 a { color: var(--moon-deep); text-decoration: none; }
 :focus-visible { outline: 2px solid var(--moon); outline-offset: 2px; border-radius: 6px; }
+::selection { color: var(--moon-text); background: var(--moon); }
+* { scrollbar-color: var(--line-strong) var(--ink-2); scrollbar-width: thin; }
 
 .mono { font-family: var(--mono); font-size: 0.82rem; }
 .dim { color: var(--muted); }
@@ -101,6 +109,11 @@ a { color: var(--moon-deep); text-decoration: none; }
   color: var(--moon-text); font-weight: 600;
 }
 .btn-moon:hover { background: var(--moon-deep); border-color: var(--moon-deep); }
+.btn-danger {
+  background: var(--danger); border-color: var(--danger);
+  color: var(--danger-ink); font-weight: 600;
+}
+.btn-danger:hover { filter: brightness(0.92); }
 .ghost {
   display: inline-flex; align-items: center; gap: 6px;
   background: none; border: 0; color: var(--muted);

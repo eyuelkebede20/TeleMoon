@@ -14,14 +14,15 @@
       href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
       rel="stylesheet"
     />
+    <meta name="theme-color" content="#0e1220" />
     <script>
       (function() {
         try {
           var saved = localStorage.getItem("telemoon_theme");
-          var theme = (saved === "light" || saved === "dark")
-            ? saved
-            : (window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark");
+          var theme = (saved === "light" || saved === "dark") ? saved : "dark";
           document.documentElement.setAttribute("data-theme", theme);
+          var meta = document.querySelector('meta[name="theme-color"]');
+          if (meta) meta.setAttribute("content", theme === "light" ? "#FAF7F2" : "#0e1220");
         } catch (_) {}
       })();
     </script>

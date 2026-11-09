@@ -7,16 +7,17 @@ export function getInitialTheme() {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved === "light" || saved === "dark") return saved;
   } catch (_) {}
-  
-  if (typeof window !== "undefined" && window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches) {
-    return "light";
-  }
-  return "dark"; // Default to dark blue-black
+  // Default to signature TeleMoon dark blue night sky (#0E1220)
+  return "dark";
 }
 
 export function applyTheme(theme) {
   if (typeof document !== "undefined") {
     document.documentElement.setAttribute("data-theme", theme);
+    const metaTheme = document.querySelector('meta[name="theme-color"]');
+    if (metaTheme) {
+      metaTheme.setAttribute("content", theme === "light" ? "#FAF7F2" : "#0e1220");
+    }
   }
 }
 

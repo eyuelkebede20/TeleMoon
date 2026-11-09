@@ -62,8 +62,7 @@ function ActionModal({ modal, onClose, onConfirm }) {
             {err && <div style={{ color: "var(--danger)", fontSize: "0.85rem" }}>{err}</div>}
             <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end", marginTop: "4px" }}>
               <button type="button" className="btn" onClick={onClose}>Cancel</button>
-              <button type="submit" className={modal.type === "remove" ? "btn" : "btn btn-moon"} 
-                style={modal.type === "remove" ? { background: "var(--danger)", borderColor: "var(--danger)", color: "#000" } : {}}>
+              <button type="submit" className={modal.type === "remove" ? "btn btn-danger" : "btn btn-moon"}>
                 {modal.type === "remove" ? "Delete" : "Confirm"}
               </button>
             </div>
