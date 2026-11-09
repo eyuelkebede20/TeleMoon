@@ -103,8 +103,8 @@ void main() {
       final ops = Planner.plan(entries);
       // Only tracked file should generate an op
       expect(ops.length, 1);
-      expect(ops.first.nodeId, '1');
-      expect(ops.first.kind, 'download');
+      expect(ops.first.kind, SyncOpKind.download);
+      expect(ops.first.payload['nodeId'], '1');
     });
   });
 }
