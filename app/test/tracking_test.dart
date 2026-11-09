@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:app/sync/models.dart';
 import 'package:app/sync/planner.dart';
@@ -18,6 +19,7 @@ void main() {
 
     setUp(() async {
       tempDir = await Directory.systemTemp.createTemp('telemoon_tracking_test_');
+      SyncDB.instance.setCustomDbPath(p.join(tempDir.path, 'tracking_test.db'));
       await SyncDB.instance.clearAll();
       engine = SyncEngine.instance;
       engine.configure(
@@ -30,6 +32,7 @@ void main() {
     });
 
     tearDown(() async {
+      SyncDB.instance.setCustomDbPath(null);
       if (await tempDir.exists()) {
         await tempDir.delete(recursive: true);
       }
@@ -98,10 +101,10 @@ void main() {
       ];
 
       final ops = Planner.plan(entries);
-      // Only the tracked file should produce a download op
-      expect(ops.length, equals(1));
-      expect(ops.first.kind, equals(SyncOpKind.download));
-      expect(ops.first.payload['relPath'], equals('tracked_file.txt'));
+      // Only tracked file should generate an op
+      expect(ops.length, 1);
+      expect(ops.first.nodeId, '1');
+      expect(ops.first.kind, 'download');
     });
   });
 }

@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import { api, savedUser } from "./api.js";
-import { Crescent, LinkIcon, MegaphoneIcon, UsersIcon } from "./icons.jsx";
+import { useTheme } from "./theme.js";
+import { Crescent, LinkIcon, MegaphoneIcon, UsersIcon, SunIcon, MoonIcon } from "./icons.jsx";
 
 // Link a storage channel: paste a private t.me/+… link (user session joins it),
 // an @name, or a -100… id — or pick from channels this account already has.
 export default function Connect({ status, canSkip, onDone, onLogout }) {
+  const { theme, toggleTheme } = useTheme();
   const [link, setLink] = useState("");
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
@@ -62,7 +64,16 @@ export default function Connect({ status, canSkip, onDone, onLogout }) {
     <div className="connect-wrap">
       <div className="connect-head">
         <div className="brand"><Crescent /><span>TeleMoon</span></div>
-        <div>
+        <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+          <button
+            type="button"
+            className="theme-toggle"
+            onClick={toggleTheme}
+            title={theme === "light" ? "Switch to Blue-Black Dark Mode" : "Switch to Creamy Light Mode"}
+            aria-label="Toggle theme"
+          >
+            {theme === "light" ? <MoonIcon /> : <SunIcon />}
+          </button>
           {canSkip && <button className="ghost" onClick={onDone}>Back to drive</button>}
           <button className="ghost" onClick={onLogout}>Sign out</button>
         </div>

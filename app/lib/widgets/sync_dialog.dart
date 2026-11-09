@@ -155,10 +155,14 @@ class _SyncDialogState extends State<SyncDialog> {
     _loadAvailableFolders();
 
     if (mounted) {
+      final isDark = Theme.of(context).brightness == Brightness.dark;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Sync folder updated: $path'),
-          backgroundColor: const Color(0xFF1D2340),
+          content: Text(
+            'Sync folder updated: $path',
+            style: TextStyle(color: isDark ? const Color(0xFFE9ECFA) : Colors.white),
+          ),
+          backgroundColor: isDark ? const Color(0xFF1D2340) : const Color(0xFF1C1917),
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         ),
@@ -173,10 +177,14 @@ class _SyncDialogState extends State<SyncDialog> {
     await SyncEngine.instance.trackPath(path);
     await _loadAvailableFolders();
     if (mounted) {
+      final isDark = Theme.of(context).brightness == Brightness.dark;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Now tracking: $path'),
-          backgroundColor: const Color(0xFF1D2340),
+          content: Text(
+            'Now tracking: $path',
+            style: TextStyle(color: isDark ? const Color(0xFFE9ECFA) : Colors.white),
+          ),
+          backgroundColor: isDark ? const Color(0xFF1D2340) : const Color(0xFF1C1917),
           behavior: SnackBarBehavior.floating,
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
         ),
@@ -187,12 +195,20 @@ class _SyncDialogState extends State<SyncDialog> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final moonColor = isDark ? const Color(0xFFF0D9A8) : const Color(0xFFC48722);
+    final moonDeepColor = isDark ? const Color(0xFFC9A96A) : const Color(0xFF966310);
+    final mutedColor = isDark ? const Color(0xFF9099BE) : const Color(0xFF736B5E);
+    final textColor = isDark ? const Color(0xFFE9ECFA) : const Color(0xFF1C1917);
+    final lineColor = isDark ? const Color(0xFF262D4A) : const Color(0xFFE5DFD3);
+    final boxBg = isDark ? const Color(0xFF121730) : const Color(0xFFF0EAE1);
+    final borderStrong = isDark ? const Color(0xFF39426E) : const Color(0xFFCEC5B4);
 
     return Dialog(
-      backgroundColor: const Color(0xFF171C30),
+      backgroundColor: isDark ? const Color(0xFF171C30) : Colors.white,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(18),
-        side: const BorderSide(color: Color(0xFF262D4A)),
+        side: BorderSide(color: lineColor),
       ),
       child: Container(
         width: 580,
@@ -213,14 +229,14 @@ class _SyncDialogState extends State<SyncDialog> {
                     children: [
                       Icon(
                         isSyncing ? Icons.sync : Icons.nightlight_round,
-                        color: isError ? const Color(0xFFEE8F8F) : const Color(0xFFF0D9A8),
+                        color: isError ? (isDark ? const Color(0xFFEE8F8F) : const Color(0xFFDC2626)) : moonColor,
                         size: 26,
                       ),
                       const SizedBox(width: 12),
                       Text('Drive Sync & Tracking', style: theme.textTheme.titleLarge?.copyWith(fontSize: 18)),
                       const Spacer(),
                       IconButton(
-                        icon: const Icon(Icons.close, color: Color(0xFF9099BE)),
+                        icon: Icon(Icons.close, color: mutedColor),
                         onPressed: () => Navigator.of(context).pop(),
                       ),
                     ],
@@ -228,18 +244,18 @@ class _SyncDialogState extends State<SyncDialog> {
                   const SizedBox(height: 6),
                   Text(
                     'Mirror cloud files to a local folder and selectively track specific folders and files.',
-                    style: theme.textTheme.bodyMedium?.copyWith(color: const Color(0xFF9099BE), fontSize: 13),
+                    style: theme.textTheme.bodyMedium?.copyWith(color: mutedColor, fontSize: 13),
                   ),
 
                   const SizedBox(height: 18),
-                  Text('Local Sync Folder', style: GoogleFonts.spaceGrotesk(fontSize: 13, fontWeight: FontWeight.w600, color: const Color(0xFFE9ECFA))),
+                  Text('Local Sync Folder', style: GoogleFonts.spaceGrotesk(fontSize: 13, fontWeight: FontWeight.w600, color: textColor)),
                   const SizedBox(height: 8),
                   Row(
                     children: [
                       Expanded(
                         child: TextField(
                           controller: _pathController,
-                          style: GoogleFonts.jetBrainsMono(fontSize: 13),
+                          style: GoogleFonts.jetBrainsMono(fontSize: 13, color: textColor),
                           decoration: const InputDecoration(
                             hintText: 'C:\\Users\\...\\TeleMoon',
                             isDense: true,
@@ -263,11 +279,11 @@ class _SyncDialogState extends State<SyncDialog> {
                   const SizedBox(height: 22),
                   Row(
                     children: [
-                      const Icon(Icons.folder_special, size: 16, color: Color(0xFFF0D9A8)),
+                      Icon(Icons.folder_special, size: 16, color: moonColor),
                       const SizedBox(width: 8),
                       Text(
                         'Tracked Folders & Files',
-                        style: GoogleFonts.spaceGrotesk(fontSize: 13, fontWeight: FontWeight.w600, color: const Color(0xFFE9ECFA)),
+                        style: GoogleFonts.spaceGrotesk(fontSize: 13, fontWeight: FontWeight.w600, color: textColor),
                       ),
                       const Spacer(),
                       TextButton(
@@ -278,7 +294,7 @@ class _SyncDialogState extends State<SyncDialog> {
                           }
                           setState(() {});
                         },
-                        child: const Text('Track All', style: TextStyle(fontSize: 11, color: Color(0xFFF0D9A8))),
+                        child: Text('Track All', style: TextStyle(fontSize: 11, color: moonColor)),
                       ),
                       TextButton(
                         onPressed: () async {
@@ -288,14 +304,14 @@ class _SyncDialogState extends State<SyncDialog> {
                           }
                           setState(() {});
                         },
-                        child: const Text('Untrack All', style: TextStyle(fontSize: 11, color: Color(0xFF9099BE))),
+                        child: Text('Untrack All', style: TextStyle(fontSize: 11, color: mutedColor)),
                       ),
                     ],
                   ),
                   const SizedBox(height: 6),
                   Text(
                     'Toggle which folders and files are actively tracked and mirrored locally.',
-                    style: GoogleFonts.spaceGrotesk(fontSize: 11, color: const Color(0xFF9099BE)),
+                    style: GoogleFonts.spaceGrotesk(fontSize: 11, color: mutedColor),
                   ),
                   const SizedBox(height: 10),
 
@@ -303,15 +319,15 @@ class _SyncDialogState extends State<SyncDialog> {
                   Container(
                     constraints: const BoxConstraints(maxHeight: 180),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF121730),
+                      color: boxBg,
                       borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: const Color(0xFF262D4A)),
+                      border: Border.all(color: lineColor),
                     ),
                     child: _loadingFolders
-                        ? const Center(
+                        ? Center(
                             child: Padding(
-                              padding: EdgeInsets.all(20.0),
-                              child: CircularProgressIndicator(color: Color(0xFFF0D9A8), strokeWidth: 2),
+                              padding: const EdgeInsets.all(20.0),
+                              child: CircularProgressIndicator(color: moonColor, strokeWidth: 2),
                             ),
                           )
                         : _availableFolders.isEmpty
@@ -320,7 +336,7 @@ class _SyncDialogState extends State<SyncDialog> {
                                   padding: const EdgeInsets.all(20.0),
                                   child: Text(
                                     'No folders found yet. Link storage and upload files to start tracking.',
-                                    style: GoogleFonts.spaceGrotesk(fontSize: 12, color: const Color(0xFF9099BE)),
+                                    style: GoogleFonts.spaceGrotesk(fontSize: 12, color: mutedColor),
                                     textAlign: TextAlign.center,
                                   ),
                                 ),
@@ -328,7 +344,7 @@ class _SyncDialogState extends State<SyncDialog> {
                             : ListView.separated(
                                 shrinkWrap: true,
                                 itemCount: _availableFolders.length,
-                                separatorBuilder: (context, idx) => const Divider(height: 1, color: Color(0xFF1D2340)),
+                                separatorBuilder: (context, idx) => Divider(height: 1, color: lineColor),
                                 itemBuilder: (context, index) {
                                   final item = _availableFolders[index];
                                   final relPath = item['relPath'] as String;
@@ -342,7 +358,7 @@ class _SyncDialogState extends State<SyncDialog> {
                                       children: [
                                         Icon(
                                           isFolder ? Icons.folder : Icons.insert_drive_file,
-                                          color: isFolder ? const Color(0xFFF0D9A8) : const Color(0xFF9099BE),
+                                          color: isFolder ? moonColor : mutedColor,
                                           size: 18,
                                         ),
                                         const SizedBox(width: 10),
@@ -352,13 +368,13 @@ class _SyncDialogState extends State<SyncDialog> {
                                             children: [
                                               Text(
                                                 name,
-                                                style: const TextStyle(fontSize: 13, color: Color(0xFFE9ECFA)),
+                                                style: TextStyle(fontSize: 13, color: textColor),
                                                 maxLines: 1,
                                                 overflow: TextOverflow.ellipsis,
                                               ),
                                               Text(
                                                 relPath,
-                                                style: GoogleFonts.jetBrainsMono(fontSize: 10, color: const Color(0xFF9099BE)),
+                                                style: GoogleFonts.jetBrainsMono(fontSize: 10, color: mutedColor),
                                                 maxLines: 1,
                                                 overflow: TextOverflow.ellipsis,
                                               ),
@@ -374,10 +390,12 @@ class _SyncDialogState extends State<SyncDialog> {
                                           child: Container(
                                             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                                             decoration: BoxDecoration(
-                                              color: isTracked ? const Color(0xFFF0D9A8).withValues(alpha: 0.15) : const Color(0xFF1D2340),
+                                              color: isTracked
+                                                  ? moonColor.withValues(alpha: 0.15)
+                                                  : (isDark ? const Color(0xFF1D2340) : const Color(0xFFF5EFE6)),
                                               borderRadius: BorderRadius.circular(999),
                                               border: Border.all(
-                                                color: isTracked ? const Color(0xFFC9A96A) : const Color(0xFF39426E),
+                                                color: isTracked ? moonDeepColor : borderStrong,
                                               ),
                                             ),
                                             child: Row(
@@ -386,7 +404,7 @@ class _SyncDialogState extends State<SyncDialog> {
                                                 Icon(
                                                   isTracked ? Icons.check_circle : Icons.remove_circle_outline,
                                                   size: 13,
-                                                  color: isTracked ? const Color(0xFFF0D9A8) : const Color(0xFF9099BE),
+                                                  color: isTracked ? moonColor : mutedColor,
                                                 ),
                                                 const SizedBox(width: 5),
                                                 Text(
@@ -394,7 +412,7 @@ class _SyncDialogState extends State<SyncDialog> {
                                                   style: TextStyle(
                                                     fontSize: 11,
                                                     fontWeight: FontWeight.w600,
-                                                    color: isTracked ? const Color(0xFFF0D9A8) : const Color(0xFF9099BE),
+                                                    color: isTracked ? (isDark ? moonColor : moonDeepColor) : mutedColor,
                                                   ),
                                                 ),
                                               ],
@@ -415,11 +433,11 @@ class _SyncDialogState extends State<SyncDialog> {
                       Expanded(
                         child: TextField(
                           controller: _customPathController,
-                          style: GoogleFonts.jetBrainsMono(fontSize: 12),
+                          style: GoogleFonts.jetBrainsMono(fontSize: 12, color: textColor),
                           decoration: InputDecoration(
                             hintText: 'Track custom folder path (e.g. Work/Projects)',
                             isDense: true,
-                            hintStyle: GoogleFonts.spaceGrotesk(fontSize: 11, color: const Color(0xFF6B749E)),
+                            hintStyle: GoogleFonts.spaceGrotesk(fontSize: 11, color: isDark ? const Color(0xFF6B749E) : const Color(0xFF9E9585)),
                             contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                           ),
                           onSubmitted: (_) => _addCustomTrackedPath(),
@@ -431,8 +449,8 @@ class _SyncDialogState extends State<SyncDialog> {
                         icon: const Icon(Icons.add, size: 14),
                         label: const Text('Track', style: TextStyle(fontSize: 12)),
                         style: OutlinedButton.styleFrom(
-                          side: const BorderSide(color: Color(0xFF39426E)),
-                          foregroundColor: const Color(0xFFF0D9A8),
+                          side: BorderSide(color: borderStrong),
+                          foregroundColor: isDark ? moonColor : moonDeepColor,
                           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
                         ),
@@ -445,9 +463,9 @@ class _SyncDialogState extends State<SyncDialog> {
                   Container(
                     padding: const EdgeInsets.all(16),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF121730),
+                      color: boxBg,
                       borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: const Color(0xFF262D4A)),
+                      border: Border.all(color: lineColor),
                     ),
                     child: Row(
                       children: [
@@ -455,13 +473,13 @@ class _SyncDialogState extends State<SyncDialog> {
                           width: 40,
                           height: 40,
                           decoration: BoxDecoration(
-                            color: const Color(0xFF1D2340),
+                            color: isDark ? const Color(0xFF1D2340) : Colors.white,
                             shape: BoxShape.circle,
                             border: Border.all(
                               color: isSyncing
-                                  ? const Color(0xFFF0D9A8)
+                                  ? moonColor
                                   : isError
-                                      ? const Color(0xFFEE8F8F)
+                                      ? (isDark ? const Color(0xFFEE8F8F) : const Color(0xFFDC2626))
                                       : const Color(0xFF7FD6A4),
                             ),
                           ),
@@ -472,9 +490,9 @@ class _SyncDialogState extends State<SyncDialog> {
                                     ? Icons.error_outline
                                     : Icons.check,
                             color: isSyncing
-                                ? const Color(0xFFF0D9A8)
+                                ? moonColor
                                 : isError
-                                    ? const Color(0xFFEE8F8F)
+                                    ? (isDark ? const Color(0xFFEE8F8F) : const Color(0xFFDC2626))
                                     : const Color(0xFF7FD6A4),
                             size: 20,
                           ),
@@ -486,14 +504,14 @@ class _SyncDialogState extends State<SyncDialog> {
                             children: [
                               Text(
                                 state.message,
-                                style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+                                style: TextStyle(fontWeight: FontWeight.w600, fontSize: 14, color: textColor),
                               ),
                               const SizedBox(height: 2),
                               Text(
                                 state.lastSyncTime != null
                                     ? 'Last synced: ${state.lastSyncTime!.hour.toString().padLeft(2, '0')}:${state.lastSyncTime!.minute.toString().padLeft(2, '0')}:${state.lastSyncTime!.second.toString().padLeft(2, '0')}'
                                     : 'Not synced yet',
-                                style: GoogleFonts.jetBrainsMono(fontSize: 11, color: const Color(0xFF9099BE)),
+                                style: GoogleFonts.jetBrainsMono(fontSize: 11, color: mutedColor),
                               ),
                             ],
                           ),
@@ -505,7 +523,7 @@ class _SyncDialogState extends State<SyncDialog> {
                                   await SyncEngine.instance.sync();
                                 },
                           icon: isSyncing
-                              ? const SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF241D0E)))
+                              ? SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2, color: isDark ? const Color(0xFF241D0E) : Colors.white))
                               : const Icon(Icons.sync, size: 16),
                           label: Text(isSyncing ? 'Syncing...' : 'Sync Now', style: const TextStyle(fontSize: 13)),
                           style: ElevatedButton.styleFrom(
@@ -520,15 +538,15 @@ class _SyncDialogState extends State<SyncDialog> {
                   if (state.conflicts.isNotEmpty) ...[
                     const SizedBox(height: 16),
                     Text('Conflicted Copies (Preserved safely)',
-                        style: GoogleFonts.spaceGrotesk(fontSize: 13, fontWeight: FontWeight.w600, color: const Color(0xFFF0D9A8))),
+                        style: GoogleFonts.spaceGrotesk(fontSize: 13, fontWeight: FontWeight.w600, color: moonColor)),
                     const SizedBox(height: 8),
                     Container(
                       constraints: const BoxConstraints(maxHeight: 100),
                       padding: const EdgeInsets.all(10),
                       decoration: BoxDecoration(
-                        color: const Color(0xFF121730),
+                        color: boxBg,
                         borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: const Color(0xFF39426E)),
+                        border: Border.all(color: borderStrong),
                       ),
                       child: ListView.builder(
                         shrinkWrap: true,
@@ -537,12 +555,12 @@ class _SyncDialogState extends State<SyncDialog> {
                           padding: const EdgeInsets.symmetric(vertical: 2.0),
                           child: Row(
                             children: [
-                              const Icon(Icons.copy, size: 14, color: Color(0xFFF0D9A8)),
+                              Icon(Icons.copy, size: 14, color: moonColor),
                               const SizedBox(width: 6),
                               Expanded(
                                 child: Text(
                                   state.conflicts[i],
-                                  style: GoogleFonts.jetBrainsMono(fontSize: 11, color: const Color(0xFFE9ECFA)),
+                                  style: GoogleFonts.jetBrainsMono(fontSize: 11, color: textColor),
                                   overflow: TextOverflow.ellipsis,
                                 ),
                               ),

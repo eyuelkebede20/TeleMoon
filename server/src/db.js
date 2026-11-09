@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import bcrypt from "bcryptjs";
 import { nanoid } from "nanoid";
 import { cfg } from "./config.js";
 
@@ -75,6 +76,19 @@ function initBaseTables() {
       file_id TEXT NOT NULL,
       created_at INTEGER NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS drop_links (
+      id TEXT PRIMARY KEY,
+      code TEXT UNIQUE NOT NULL,
+      folder_id TEXT NOT NULL,
+      owner_id TEXT NOT NULL,
+      title TEXT,
+      password_hash TEXT,
+      is_active INTEGER NOT NULL DEFAULT 1,
+      upload_count INTEGER NOT NULL DEFAULT 0,
+      created_at INTEGER NOT NULL,
+      updated_at INTEGER NOT NULL
+    );
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_drop_links_code ON drop_links(code COLLATE NOCASE);
   `);
 }
 
@@ -881,4 +895,131 @@ export function createShare(fileId) {
 
 export function getShare(shareId) {
   return q(`SELECT * FROM shares WHERE id=?`).get(shareId);
+}
+
+/* ==========================================================================
+   DROP / UPLOAD LINKS (Send a link)
+   ========================================================================== */
+
+export function generateDropCode() {
+  for (let attempt = 0; attempt < 50; attempt++) {
+    const code = String(Math.floor(1000 + Math.random() * 9000));
+    const exists = q(`SELECT 1 FROM drop_links WHERE code=? COLLATE NOCASE`).get(code);
+    if (!exists) return code;
+  }
+  return String(Math.floor(10000 + Math.random() * 90000));
+}
+
+export function createDropLink({ folderId, ownerId, code, password, title }) {
+  const folder = getNode(folderId);
+  if (!folder || folder.type !== "folder" || folder.deleted_at) {
+    throw new Error("Target folder not found");
+  }
+  if (folder.owner_id && folder.owner_id !== ownerId) {
+    throw new Error("Folder does not belong to you");
+  }
+
+  let finalCode = (code || "").trim();
+  if (finalCode) {
+    if (!/^[a-zA-Z0-9_-]{2,32}$/.test(finalCode)) {
+      throw new Error("Code must be 2–32 letters, numbers, hyphens, or underscores");
+    }
+    const existing = q(`SELECT id FROM drop_links WHERE code=? COLLATE NOCASE`).get(finalCode);
+    if (existing) {
+      throw new Error(`The code or link "${finalCode}" is already in use. Please choose another.`);
+    }
+  } else {
+    finalCode = generateDropCode();
+  }
+
+  const id = uid();
+  const passwordHash = password && password.trim() ? bcrypt.hashSync(password.trim(), 10) : null;
+  const t = now();
+
+  q(`INSERT INTO drop_links(id, code, folder_id, owner_id, title, password_hash, is_active, upload_count, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, 1, 0, ?, ?)`).run(
+    id,
+    finalCode,
+    folderId,
+    ownerId,
+    title ? String(title).trim() : null,
+    passwordHash,
+    t,
+    t
+  );
+
+  return getDropLinkById(id);
+}
+
+export function getDropLinkById(id) {
+  return q(`
+    SELECT d.*, u.handle as owner_handle, n.name as folder_name
+    FROM drop_links d
+    LEFT JOIN users u ON u.id = d.owner_id
+    LEFT JOIN nodes n ON n.id = d.folder_id
+    WHERE d.id=?
+  `).get(id);
+}
+
+export function getDropLinkByCode(code) {
+  if (!code) return null;
+  return q(`
+    SELECT d.*, u.handle as owner_handle, n.name as folder_name
+    FROM drop_links d
+    LEFT JOIN users u ON u.id = d.owner_id
+    LEFT JOIN nodes n ON n.id = d.folder_id
+    WHERE d.code=? COLLATE NOCASE
+  `).get(code.trim());
+}
+
+export function getDropLinksByFolder(folderId, ownerId) {
+  return q(`
+    SELECT d.*, u.handle as owner_handle, n.name as folder_name
+    FROM drop_links d
+    LEFT JOIN users u ON u.id = d.owner_id
+    LEFT JOIN nodes n ON n.id = d.folder_id
+    WHERE d.folder_id=? AND d.owner_id=?
+    ORDER BY d.created_at DESC
+  `).all(folderId, ownerId);
+}
+
+export function updateDropLink(id, ownerId, { code, password, is_active, title }) {
+  const existing = q(`SELECT * FROM drop_links WHERE id=? AND owner_id=?`).get(id, ownerId);
+  if (!existing) throw new Error("Drop link not found");
+
+  let newCode = existing.code;
+  if (code && code.trim() !== existing.code) {
+    const c = code.trim();
+    if (!/^[a-zA-Z0-9_-]{2,32}$/.test(c)) {
+      throw new Error("Code must be 2–32 letters, numbers, hyphens, or underscores");
+    }
+    const conflict = q(`SELECT id FROM drop_links WHERE code=? COLLATE NOCASE AND id!=?`).get(c, id);
+    if (conflict) {
+      throw new Error(`The code or link "${c}" is already in use.`);
+    }
+    newCode = c;
+  }
+
+  let newPasswordHash = existing.password_hash;
+  if (password !== undefined) {
+    newPasswordHash = password && password.trim() ? bcrypt.hashSync(password.trim(), 10) : null;
+  }
+
+  const newActive = is_active !== undefined ? (is_active ? 1 : 0) : existing.is_active;
+  const newTitle = title !== undefined ? (title ? String(title).trim() : null) : existing.title;
+
+  q(`UPDATE drop_links
+     SET code=?, password_hash=?, is_active=?, title=?, updated_at=?
+     WHERE id=? AND owner_id=?`).run(newCode, newPasswordHash, newActive, newTitle, now(), id, ownerId);
+
+  return getDropLinkById(id);
+}
+
+export function deleteDropLink(id, ownerId) {
+  const res = q(`DELETE FROM drop_links WHERE id=? AND owner_id=?`).run(id, ownerId);
+  return { ok: res.changes > 0 };
+}
+
+export function incrementDropLinkUploadCount(id) {
+  q(`UPDATE drop_links SET upload_count = upload_count + 1, updated_at=? WHERE id=?`).run(now(), id);
 }

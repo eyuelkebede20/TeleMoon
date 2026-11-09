@@ -19,11 +19,13 @@ import {
   getFileVersions, getTrash, findVerifiedBlob, registerDevice,
   updateDeviceCursor, getDevices, revokeDevice, createSSETicket,
   verifyAndConsumeSSETicket, createShare, getShare,
+  createDropLink, getDropLinkById, getDropLinkByCode, getDropLinksByFolder,
+  updateDropLink, deleteDropLink, incrementDropLinkUploadCount,
 } from "./db.js";
 import { sign, auth } from "./auth.js";
 import { addSSEClient, emitSyncChange } from "./sync.js";
 import {
-  tg, sendDocument, deleteMessages, streamRange, connectByLink, listDialogs, syncChannelHistory,
+  tg, sendDocument, deleteMessages, streamRange, connectByLink, listDialogs, syncChannelHistory, resolvePeer,
 } from "./telegram.js";
 
 export const api = Router();
@@ -341,6 +343,318 @@ api.post("/nodes/:id/share", auth, (req, res) => {
   res.json({ shareId });
 });
 
+/* ---------------------------------------------------- drop / upload links */
+
+function signDropTicket(dropLink) {
+  return jwt.sign(
+    {
+      type: "drop",
+      dropLinkId: dropLink.id,
+      code: dropLink.code,
+      ownerId: dropLink.owner_id,
+      folderId: dropLink.folder_id,
+    },
+    cfg.jwtSecret,
+    { expiresIn: "4h" }
+  );
+}
+
+function verifyDropTicket(req, res, next) {
+  const raw =
+    req.headers["x-drop-ticket"] ||
+    req.headers.authorization?.replace(/^Bearer\s+/i, "") ||
+    req.body?.ticket ||
+    req.query.ticket;
+
+  if (!raw) return res.status(401).json({ error: "Missing upload ticket" });
+
+  try {
+    const decoded = jwt.verify(raw, cfg.jwtSecret);
+    if (decoded.type !== "drop") {
+      return res.status(401).json({ error: "Invalid ticket type" });
+    }
+    const dropLink = getDropLinkById(decoded.dropLinkId);
+    if (!dropLink || !dropLink.is_active) {
+      return res.status(403).json({ error: "This upload link is inactive or has been revoked" });
+    }
+    const targetFolder = getNode(dropLink.folder_id);
+    if (!targetFolder || targetFolder.deleted_at) {
+      return res.status(404).json({ error: "Destination folder no longer exists" });
+    }
+
+    req.dropLink = dropLink;
+    req.dropTargetFolder = targetFolder;
+    next();
+  } catch (_) {
+    return res.status(401).json({ error: "Upload session expired. Please re-enter the code or password." });
+  }
+}
+
+// List drop links for a folder
+api.get("/folders/:id/drop-links", auth, (req, res) => {
+  const folder = getNode(req.params.id);
+  if (!folder || folder.type !== "folder" || folder.deleted_at) {
+    return bad(res, 404, "Folder not found");
+  }
+  const links = getDropLinksByFolder(folder.id, req.user.id);
+  res.json({ dropLinks: links });
+});
+
+// Create a drop link for a folder
+api.post("/folders/:id/drop-links", auth, (req, res) => {
+  const { code, password, title } = req.body || {};
+  try {
+    const link = createDropLink({
+      folderId: req.params.id,
+      ownerId: req.user.id,
+      code,
+      password,
+      title,
+    });
+    res.json({ dropLink: link });
+  } catch (e) {
+    bad(res, 400, e.message);
+  }
+});
+
+// Update a drop link
+api.patch("/drop-links/:id", auth, (req, res) => {
+  const { code, password, is_active, title } = req.body || {};
+  try {
+    const updated = updateDropLink(req.params.id, req.user.id, {
+      code,
+      password,
+      is_active,
+      title,
+    });
+    res.json({ dropLink: updated });
+  } catch (e) {
+    bad(res, 400, e.message);
+  }
+});
+
+// Delete a drop link
+api.delete("/drop-links/:id", auth, (req, res) => {
+  try {
+    const result = deleteDropLink(req.params.id, req.user.id);
+    res.json(result);
+  } catch (e) {
+    bad(res, 400, e.message);
+  }
+});
+
+// Public info for a drop link / 4-digit code
+api.get("/drop/:code", (req, res) => {
+  const link = getDropLinkByCode(req.params.code);
+  if (!link || !link.is_active) {
+    return bad(res, 404, "Upload link not found or inactive");
+  }
+  const folder = getNode(link.folder_id);
+  if (!folder || folder.deleted_at) {
+    return bad(res, 404, "Destination folder no longer exists");
+  }
+
+  const hasPassword = Boolean(link.password_hash);
+  res.json({
+    valid: true,
+    id: link.id,
+    code: link.code,
+    title: link.title || null,
+    ownerHandle: link.owner_handle || "user",
+    folderName: folder.name,
+    hasPassword,
+    uploadCount: link.upload_count,
+    ticket: hasPassword ? null : signDropTicket(link),
+  });
+});
+
+// Verify password/PIN for a drop link
+api.post("/drop/:code/verify", (req, res) => {
+  const link = getDropLinkByCode(req.params.code);
+  if (!link || !link.is_active) {
+    return bad(res, 404, "Upload link not found or inactive");
+  }
+
+  const { password } = req.body || {};
+  if (!link.password_hash) {
+    return res.json({ ok: true, ticket: signDropTicket(link) });
+  }
+
+  if (!password || !bcrypt.compareSync(String(password), link.password_hash)) {
+    return bad(res, 401, "Incorrect password or PIN");
+  }
+
+  res.json({ ok: true, ticket: signDropTicket(link) });
+});
+
+// Public drop chunked upload initialization
+api.post("/drop/:code/uploads", verifyDropTicket, (req, res) => {
+  const { name, size, mime, hash, clientModifiedAt } = req.body || {};
+  if (!name || !(Number.isFinite(size) && size >= 0)) {
+    return bad(res, 400, "name and size required");
+  }
+
+  const dropLink = req.dropLink;
+
+  // Deduplication check
+  if (hash && size > 0) {
+    const verifiedBlob = findVerifiedBlob(dropLink.owner_id, hash, size);
+    if (verifiedBlob) {
+      try {
+        const { node, cursor } = createFileNode({
+          parentId: dropLink.folder_id,
+          name,
+          size,
+          mime,
+          ownerId: dropLink.owner_id,
+          hash,
+          clientModifiedAt,
+          blobId: verifiedBlob.id,
+        });
+
+        incrementDropLinkUploadCount(dropLink.id);
+        emitSyncChange(dropLink.owner_id, cursor);
+        return res.json({ dedup: true, node, cursor });
+      } catch (e) {
+        return bad(res, 500, e.message);
+      }
+    }
+  }
+
+  const id = uid();
+  q(`INSERT INTO uploads(id,name,parent_id,size,mime,chunk_size,user_id,hash,client_modified_at,created_at)
+     VALUES (?,?,?,?,?,?,?,?,?,?)`)
+    .run(
+      id,
+      String(name),
+      dropLink.folder_id,
+      size,
+      mime || null,
+      cfg.chunkBytes,
+      dropLink.owner_id,
+      hash || null,
+      clientModifiedAt ? Number(clientModifiedAt) : null,
+      now()
+    );
+
+  res.json({ id, chunkSize: cfg.chunkBytes, dedup: false });
+});
+
+// Public drop upload part streaming
+api.put("/drop/:code/uploads/:id/parts/:idx", verifyDropTicket, async (req, res) => {
+  const up = q(`SELECT * FROM uploads WHERE id=?`).get(req.params.id);
+  if (!up || up.user_id !== req.dropLink.owner_id || up.parent_id !== req.dropLink.folder_id) {
+    return bad(res, 404, "upload not found");
+  }
+  if (!tg.ready) return bad(res, 503, tg.error || "Telegram storage offline");
+
+  const idx = Number(req.params.idx);
+  const totalParts = Math.max(1, Math.ceil(up.size / up.chunk_size));
+  if (!(idx >= 0 && idx < totalParts)) return bad(res, 400, "part index out of range");
+
+  const tmp = path.join(cfg.dataDir, "tmp", `${up.id}.${idx}`);
+  try {
+    let received = 0;
+    const hasher = crypto.createHash("sha256");
+
+    req.on("data", (d) => {
+      received += d.length;
+      hasher.update(d);
+    });
+
+    await pipeline(req, fs.createWriteStream(tmp));
+    if (received === 0 && up.size > 0) return bad(res, 400, "empty part");
+
+    const computedPartHash = hasher.digest("hex");
+    const expectedPartHash = req.headers["x-part-sha256"] || req.headers["x-part-hash"];
+
+    if (expectedPartHash && expectedPartHash.toLowerCase() !== computedPartHash.toLowerCase()) {
+      await fsp.rm(tmp, { force: true });
+      return res.status(422).json({
+        error: { code: "HASH_MISMATCH", message: "Part SHA-256 mismatch", computed: computedPartHash },
+      });
+    }
+
+    let peer;
+    try { peer = getUserPeer(up.user_id); } catch (e) {}
+
+    const partName =
+      totalParts > 1
+        ? `${up.name}.part${String(idx + 1).padStart(3, "0")}`
+        : up.name;
+    const caption = `tm1;f=${up.name.slice(0, 200)};p=${idx + 1}/${totalParts};drop=${req.dropLink.code}`;
+    const msgId = await sendDocument(tmp, partName, caption, peer);
+
+    const prev = q(`SELECT msg_id FROM upload_parts WHERE upload_id=? AND idx=?`).get(up.id, idx);
+    if (prev) deleteMessages([prev.msg_id], peer);
+
+    q(`INSERT OR REPLACE INTO upload_parts(upload_id,idx,msg_id,size,part_hash) VALUES (?,?,?,?,?)`)
+      .run(up.id, idx, msgId, received, computedPartHash);
+
+    res.json({ msgId, size: received, partHash: computedPartHash });
+  } catch (e) {
+    console.error("[drop upload part]", e);
+    bad(res, e.status || 500, e.message);
+  } finally {
+    fsp.rm(tmp, { force: true }).catch(() => {});
+  }
+});
+
+// Public drop upload completion
+api.post("/drop/:code/uploads/:id/complete", verifyDropTicket, (req, res) => {
+  const up = q(`SELECT * FROM uploads WHERE id=?`).get(req.params.id);
+  if (!up || up.user_id !== req.dropLink.owner_id || up.parent_id !== req.dropLink.folder_id) {
+    return bad(res, 404, "upload not found");
+  }
+
+  const parts = q(`SELECT * FROM upload_parts WHERE upload_id=? ORDER BY idx`).all(up.id);
+  const expected = up.size === 0 ? 0 : Math.ceil(up.size / up.chunk_size);
+  const total = parts.reduce((s, p) => s + p.size, 0);
+
+  if (parts.length !== expected || total !== up.size) {
+    return bad(res, 400, `incomplete upload: ${parts.length}/${expected} parts, ${total}/${up.size} bytes`);
+  }
+
+  try {
+    const { node, cursor } = createFileNode({
+      parentId: up.parent_id,
+      name: up.name,
+      size: up.size,
+      mime: up.mime,
+      ownerId: up.user_id,
+      parts,
+      hash: up.hash,
+      clientModifiedAt: up.client_modified_at,
+    });
+
+    db.transaction(() => {
+      q(`DELETE FROM upload_parts WHERE upload_id=?`).run(up.id);
+      q(`DELETE FROM uploads WHERE id=?`).run(up.id);
+    })();
+
+    incrementDropLinkUploadCount(req.dropLink.id);
+    emitSyncChange(up.user_id, cursor);
+    res.json({ ok: true, node });
+  } catch (e) {
+    bad(res, 500, e.message);
+  }
+});
+
+// Public drop abort upload
+api.delete("/drop/:code/uploads/:id", verifyDropTicket, (req, res) => {
+  const up = q(`SELECT * FROM uploads WHERE id=?`).get(req.params.id);
+  if (!up || up.user_id !== req.dropLink.owner_id) return bad(res, 404, "upload not found");
+  const msgIds = q(`SELECT msg_id FROM upload_parts WHERE upload_id=?`).all(up.id).map((r) => r.msg_id);
+  db.transaction(() => {
+    q(`DELETE FROM upload_parts WHERE upload_id=?`).run(up.id);
+    q(`DELETE FROM uploads WHERE id=?`).run(up.id);
+  })();
+  let peer;
+  try { peer = getUserPeer(up.user_id); } catch (e) {}
+  deleteMessages(msgIds, peer);
+  res.json({ ok: true });
+});
+
 api.get("/folders/tree", auth, (req, res) => {
   const folders = q(
     `SELECT id, parent_id, name FROM nodes
@@ -609,6 +923,9 @@ async function serveNodeContent(req, res, node) {
       peer = tg.channel;
     }
   }
+  if (!peer) {
+    return bad(res, 503, "No Telegram channel connected for this file");
+  }
 
   let start = 0, end = Math.max(total - 1, 0), status = 200;
   const range = req.headers.range;
@@ -692,6 +1009,9 @@ api.get("/folders/:id/download", auth, async (req, res) => {
     } catch (_) {
       peer = tg.channel;
     }
+  }
+  if (!peer) {
+    return bad(res, 503, "No Telegram channel connected for this folder");
   }
 
   const safeAscii = (rootFolder.name || "folder").replace(/[^\x20-\x7E]/g, "_").replace(/["\\]/g, "_");

@@ -1,5 +1,6 @@
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:path/path.dart' as p;
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:app/sync/models.dart';
 import 'package:app/sync/scanner.dart';
@@ -66,6 +67,21 @@ void main() {
   });
 
   group('SyncDB CRUD Tests', () {
+    late Directory tempDir;
+
+    setUp(() async {
+      tempDir = await Directory.systemTemp.createTemp('telemoon_db_test_');
+      SyncDB.instance.setCustomDbPath(p.join(tempDir.path, 'test_sync.db'));
+      await SyncDB.instance.clearAll();
+    });
+
+    tearDown(() async {
+      SyncDB.instance.setCustomDbPath(null);
+      if (await tempDir.exists()) {
+        await tempDir.delete(recursive: true);
+      }
+    });
+
     test('Can save, retrieve, and update sync entries via SyncDB', () async {
       final db = SyncDB.instance;
       final entry = SyncEntry(

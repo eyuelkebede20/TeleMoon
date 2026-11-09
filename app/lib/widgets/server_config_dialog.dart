@@ -36,11 +36,16 @@ class _ServerConfigDialogState extends State<ServerConfigDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final moonColor = isDark ? const Color(0xFFF0D9A8) : const Color(0xFFC48722);
+    final mutedColor = isDark ? const Color(0xFF9099BE) : const Color(0xFF736B5E);
+    final lineColor = isDark ? const Color(0xFF262D4A) : const Color(0xFFE5DFD3);
+
     return Dialog(
-      backgroundColor: const Color(0xFF171C30),
+      backgroundColor: isDark ? const Color(0xFF171C30) : Colors.white,
       shape: RoundedRectangleBorder(
         borderRadius: BorderRadius.circular(16),
-        side: const BorderSide(color: Color(0xFF262D4A)),
+        side: BorderSide(color: lineColor),
       ),
       child: Container(
         width: 440,
@@ -51,15 +56,19 @@ class _ServerConfigDialogState extends State<ServerConfigDialog> {
           children: [
             Row(
               children: [
-                const Icon(Icons.dns, color: Color(0xFFF0D9A8), size: 22),
+                Icon(Icons.dns, color: moonColor, size: 22),
                 const SizedBox(width: 10),
-                const Text(
+                Text(
                   'Server Configuration',
-                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 16),
+                  style: TextStyle(
+                    fontWeight: FontWeight.w700,
+                    fontSize: 16,
+                    color: isDark ? const Color(0xFFE9ECFA) : const Color(0xFF1C1917),
+                  ),
                 ),
                 const Spacer(),
                 IconButton(
-                  icon: const Icon(Icons.close, color: Color(0xFF9099BE), size: 20),
+                  icon: Icon(Icons.close, color: mutedColor, size: 20),
                   padding: EdgeInsets.zero,
                   constraints: const BoxConstraints(),
                   onPressed: () => Navigator.of(context).pop(),
@@ -67,24 +76,30 @@ class _ServerConfigDialogState extends State<ServerConfigDialog> {
               ],
             ),
             const SizedBox(height: 12),
-            const Text(
+            Text(
               'Set the TeleMoon backend API URL. Useful when connecting from a physical phone, emulator, or custom host.',
-              style: TextStyle(color: Color(0xFF9099BE), fontSize: 12),
+              style: TextStyle(color: mutedColor, fontSize: 12),
             ),
             const SizedBox(height: 16),
             TextField(
               controller: _urlController,
-              style: GoogleFonts.jetBrainsMono(fontSize: 13),
-              decoration: const InputDecoration(
+              style: GoogleFonts.jetBrainsMono(
+                fontSize: 13,
+                color: isDark ? const Color(0xFFE9ECFA) : const Color(0xFF1C1917),
+              ),
+              decoration: InputDecoration(
                 hintText: 'https://telemoon.ethiodeploy.com/api',
-                prefixIcon: Icon(Icons.link, color: Color(0xFF9099BE), size: 18),
+                prefixIcon: Icon(Icons.link, color: mutedColor, size: 18),
                 isDense: true,
               ),
             ),
             const SizedBox(height: 8),
             Text(
               'Default: https://telemoon.ethiodeploy.com/api',
-              style: GoogleFonts.jetBrainsMono(fontSize: 10, color: const Color(0xFF6E78A0)),
+              style: GoogleFonts.jetBrainsMono(
+                fontSize: 10,
+                color: isDark ? const Color(0xFF6E78A0) : const Color(0xFF9E9585),
+              ),
             ),
             const SizedBox(height: 20),
             Row(
@@ -92,7 +107,7 @@ class _ServerConfigDialogState extends State<ServerConfigDialog> {
               children: [
                 TextButton(
                   onPressed: _reset,
-                  child: const Text('Reset Default', style: TextStyle(color: Color(0xFF9099BE))),
+                  child: Text('Reset Default', style: TextStyle(color: mutedColor)),
                 ),
                 const SizedBox(width: 10),
                 ElevatedButton(

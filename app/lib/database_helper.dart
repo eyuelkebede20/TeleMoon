@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:sqflite/sqflite.dart';
 import 'package:path/path.dart';
 import 'package:path_provider/path_provider.dart';
@@ -23,17 +24,31 @@ class DatabaseHelper {
     return _database!;
   }
 
-  _initDatabase() async {
-    final documentsDirectory = await getApplicationDocumentsDirectory();
-    final path = join(documentsDirectory.path, _databaseName);
+  void setDatabaseForTesting(Database? db) {
+    _database = db;
+  }
+
+  Future<Database> _initDatabase() async {
+    String dbPath;
+    try {
+      final documentsDirectory = await getApplicationDocumentsDirectory();
+      dbPath = join(documentsDirectory.path, _databaseName);
+    } catch (_) {
+      dbPath = join(Directory.current.path, _databaseName);
+    }
+
     return await openDatabase(
-      path,
+      dbPath,
       version: _databaseVersion,
+      onConfigure: (db) async {
+        await db.execute('PRAGMA journal_mode = WAL;');
+        await db.execute('PRAGMA busy_timeout = 5000;');
+      },
       onCreate: _onCreate,
     );
   }
 
-  Future _onCreate(Database db, int version) async {
+  Future<void> _onCreate(Database db, int version) async {
     await db.execute('''
           CREATE TABLE $tableChannels (
             $columnId INTEGER PRIMARY KEY AUTOINCREMENT,

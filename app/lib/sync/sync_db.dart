@@ -10,11 +10,21 @@ class SyncDB {
   SyncDB._internal();
 
   Database? _db;
+  String? _customDbPath;
 
   Future<Database> get db async {
     if (_db != null) return _db!;
     _db = await _init();
     return _db!;
+  }
+
+  void setDbForTesting(Database? testDb) {
+    _db = testDb;
+  }
+
+  void setCustomDbPath(String? path) {
+    _customDbPath = path;
+    _db = null;
   }
 
   static void ensureInitialized() {
@@ -26,17 +36,26 @@ class SyncDB {
 
   Future<Database> _init() async {
     ensureInitialized();
-    Directory dir;
-    try {
-      dir = await getApplicationSupportDirectory();
-    } catch (_) {
-      dir = Directory.current;
+    String dbPath;
+    if (_customDbPath != null) {
+      dbPath = _customDbPath!;
+    } else {
+      Directory dir;
+      try {
+        dir = await getApplicationSupportDirectory();
+      } catch (_) {
+        dir = Directory.current;
+      }
+      dbPath = p.join(dir.path, 'telemoon_sync.db');
     }
-    final dbPath = p.join(dir.path, 'telemoon_sync.db');
 
     return await openDatabase(
       dbPath,
       version: 1,
+      onConfigure: (d) async {
+        await d.execute('PRAGMA journal_mode = WAL;');
+        await d.execute('PRAGMA busy_timeout = 5000;');
+      },
       onCreate: (d, v) async {
         await d.execute('''
           CREATE TABLE entries (
@@ -138,7 +157,7 @@ class SyncDB {
 
   Future<void> setEntriesExcludedByPrefix(String prefix, bool excluded) async {
     final d = await db;
-    final normalized = prefix.replaceAll(r'\\', '/').toLowerCase();
+    final normalized = prefix.replaceAll(r'\', '/').toLowerCase();
     final val = excluded ? 1 : 0;
     await d.rawUpdate('''
       UPDATE entries 
@@ -148,7 +167,6 @@ class SyncDB {
          OR LOWER(remote_name) = ?
     ''', [val, normalized, '$normalized/%', normalized]);
   }
-
 
   Future<List<SyncEntry>> getAllEntries() async {
     final d = await db;

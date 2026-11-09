@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, uploadFile } from "./api.js";
+import { useTheme } from "./theme.js";
+import FolderShareModal from "./FolderShareModal.jsx";
 import {
   Crescent, MoonProgress, iconFor, UploadIcon, PlusIcon, SearchIcon,
   DownloadIcon, TrashIcon, EditIcon, XIcon, LogoutIcon, ChevR, ShareIcon,
-  SyncIcon, MoveIcon, LayersIcon,
+  SyncIcon, MoveIcon, LayersIcon, SunIcon, MoonIcon, SendIcon,
 } from "./icons.jsx";
 
 const fmtBytes = (n) => {
@@ -175,7 +177,8 @@ function MoveModal({ modal, onClose, onConfirm }) {
   );
 }
 
-export default function Drive({ user, onLogout, onStorage }) {
+export default function Drive({ user, onLogout, onStorage, onOpenDrop }) {
+  const { theme, toggleTheme } = useTheme();
   const [stack, setStack] = useState([{ id: "root", name: "Home" }]);
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -210,6 +213,7 @@ export default function Drive({ user, onLogout, onStorage }) {
   };
   const [uploads, setUploads] = useState([]); // {key,name,pct,part,parts,status,handle}
   const [preview, setPreview] = useState(null);
+  const [downloadingId, setDownloadingId] = useState(null);
   const [status, setStatus] = useState(null);
   const [dragOver, setDragOver] = useState(false);
   const fileInput = useRef(null);
@@ -332,6 +336,11 @@ export default function Drive({ user, onLogout, onStorage }) {
   function rename(node) { setModal({ type: "rename", node }); }
   function remove(node) { setModal({ type: "remove", node }); }
   async function share(node) {
+    if (!node) return;
+    if (node.type === "folder" || node.id === cwd.id) {
+      setModal({ type: "folder-share", node });
+      return;
+    }
     try {
       const { shareId } = await api.share(node.id);
       const url = `${window.location.origin}/api/share/${shareId}/content`;
@@ -370,6 +379,34 @@ export default function Drive({ user, onLogout, onStorage }) {
       setOrganizing(false);
     }
   }
+
+  const handleDownload = async (e, node) => {
+    e?.stopPropagation?.();
+    if (!node || downloadingId) return;
+    setDownloadingId(node.id);
+    const isFolder = node.type === "folder";
+    const filename = isFolder ? `${node.name}.zip` : node.name;
+    const url = isFolder ? api.folderZipUrl(node.id) : api.fileUrl(node.id, true);
+
+    try {
+      setToastMessage(`Downloading "${filename}"…`);
+      const blob = await api.downloadBlob(url);
+      const blobUrl = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.style.display = "none";
+      link.href = blobUrl;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      setTimeout(() => window.URL.revokeObjectURL(blobUrl), 15000);
+      setToastMessage(`✓ Finished downloading "${filename}"`);
+    } catch (err) {
+      setToastMessage(`Download failed: ${err.message}`);
+    } finally {
+      setDownloadingId(null);
+    }
+  };
 
   /* OS file drop vs internal row drag */
   const isOsDrag = (e) => [...(e.dataTransfer?.types || [])].some(t => t.toLowerCase() === "files");
@@ -413,14 +450,14 @@ export default function Drive({ user, onLogout, onStorage }) {
       }
       enqueue(filesToUpload, emptyFolders);
     } catch (err) {
-      alert("Error reading dropped folder: " + err.message);
+      setToastMessage("Error reading dropped folder: " + err.message);
     }
   }
   async function dropOnFolder(e, folder) {
     e.preventDefault(); e.stopPropagation();
     const id = e.dataTransfer.getData("application/x-telemoon-node");
     if (!id || id === folder.id) return;
-    try { await api.move(id, folder.id); refresh(); } catch (ex) { alert(ex.message); }
+    try { await api.move(id, folder.id); refresh(); } catch (ex) { setToastMessage(`Move failed: ${ex.message}`); }
   }
 
   const previewable = (n) =>
@@ -441,6 +478,9 @@ export default function Drive({ user, onLogout, onStorage }) {
           {q && <button className="ghost" onClick={() => setQ("")} aria-label="Clear search"><XIcon /></button>}
         </div>
         <div className="top-actions">
+          <button className="btn" onClick={() => share(cwd)} title="Create or manage drop upload link for this folder">
+            <SendIcon /> Send a link
+          </button>
           <button className="btn" onClick={handleSyncTelegram} disabled={syncing} title="Sync files from Telegram chat history">
             <SyncIcon className={syncing ? "spin" : ""} /> {syncing ? "Syncing…" : "Sync Telegram"}
           </button>
@@ -455,6 +495,14 @@ export default function Drive({ user, onLogout, onStorage }) {
           </button>
           <input ref={fileInput} type="file" multiple hidden
             onChange={(e) => { enqueue([...e.target.files]); e.target.value = ""; }} />
+          <button
+            className="ghost theme-toggle"
+            title={theme === "light" ? "Switch to Blue-Black Dark Mode" : "Switch to Creamy Light Mode"}
+            onClick={toggleTheme}
+            aria-label="Toggle theme"
+          >
+            {theme === "light" ? <MoonIcon /> : <SunIcon />}
+          </button>
           <button className="ghost user" title={`@${user.handle} — sign out`} onClick={onLogout}>
             <span className="avatar">{user.handle?.[0]?.toUpperCase() || "@"}</span>
             <LogoutIcon />
@@ -474,7 +522,7 @@ export default function Drive({ user, onLogout, onStorage }) {
                 e.preventDefault(); e.stopPropagation();
                 const id = e.dataTransfer.getData("application/x-telemoon-node");
                 if (!id || id === c.id) return;
-                try { await api.move(id, c.id); refresh(); } catch (ex) { alert(ex.message); }
+                try { await api.move(id, c.id); refresh(); } catch (ex) { setToastMessage(`Move failed: ${ex.message}`); }
               }}
               onClick={() => setStack(stack.slice(0, i + 1))}>{c.name}</button>
           </span>
@@ -565,20 +613,23 @@ export default function Drive({ user, onLogout, onStorage }) {
                     >
                       <SyncIcon />
                     </button>
-                    {n.type === "file" && (
-                      <button className="ghost" onClick={() => share(n)} title="Share"><ShareIcon /></button>
-                    )}
-                    <button className="ghost" onClick={() => setModal({ type: "move", node: n })} title="Move to folder"><MoveIcon /></button>
-                    <a
+                    <button
                       className="ghost"
-                      href={n.type === "folder" ? api.folderZipUrl(n.id) : api.fileUrl(n.id, true)}
-                      download={n.type === "folder" ? `${n.name}.zip` : n.name}
-                      draggable={false}
-                      title="Download"
-                      onClick={(e) => e.stopPropagation()}
+                      onClick={() => share(n)}
+                      title={n.type === "folder" ? "Send a link / Share folder" : "Share file"}
                     >
-                      <DownloadIcon />
-                    </a>
+                      {n.type === "folder" ? <SendIcon /> : <ShareIcon />}
+                    </button>
+                    <button className="ghost" onClick={() => setModal({ type: "move", node: n })} title="Move to folder"><MoveIcon /></button>
+                    <button
+                      type="button"
+                      className="ghost"
+                      title={downloadingId === n.id ? "Downloading…" : "Download"}
+                      disabled={downloadingId === n.id}
+                      onClick={(e) => handleDownload(e, n)}
+                    >
+                      <DownloadIcon className={downloadingId === n.id ? "spin" : ""} />
+                    </button>
                     <button className="ghost" onClick={() => rename(n)} title="Rename"><EditIcon /></button>
                     <button className="ghost danger" onClick={() => remove(n)} title="Delete"><TrashIcon /></button>
                   </div>
@@ -620,7 +671,9 @@ export default function Drive({ user, onLogout, onStorage }) {
         </aside>
       )}
 
-      {modal && modal.type === "share" ? (
+      {modal && modal.type === "folder-share" ? (
+        <FolderShareModal folder={modal.node} onClose={() => setModal(null)} />
+      ) : modal && modal.type === "share" ? (
         <ShareModal modal={modal} onClose={() => setModal(null)} />
       ) : modal && modal.type === "move" ? (
         <MoveModal
@@ -660,15 +713,15 @@ export default function Drive({ user, onLogout, onStorage }) {
             <header>
               <span className="upname">{preview.name}</span>
               <div>
-                <a
+                <button
+                  type="button"
                   className="btn"
-                  href={api.fileUrl(preview.id, true)}
-                  download={preview.name}
-                  draggable={false}
-                  onClick={(e) => e.stopPropagation()}
+                  disabled={downloadingId === preview.id}
+                  onClick={(e) => handleDownload(e, preview)}
                 >
-                  <DownloadIcon /> Download
-                </a>
+                  <DownloadIcon className={downloadingId === preview.id ? "spin" : ""} />{" "}
+                  {downloadingId === preview.id ? "Downloading…" : "Download"}
+                </button>
                 <button className="ghost" onClick={() => setPreview(null)} aria-label="Close"><XIcon /></button>
               </div>
             </header>

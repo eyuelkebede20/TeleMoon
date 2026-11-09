@@ -4,10 +4,10 @@ The single source of truth for how TeleMoon looks and feels. Every page and ever
 new component is checked against this file before it ships. Tokens live in
 `web/src/styles.css` `:root` and are referenced here by name.
 
-## 1. The scene: a quiet night sky
+## 1. The scene: quiet night sky or warm creamy day
 
-The app is a dark indigo sky (`--ink`) with faint stars. Content never floats on
-the sky directly — it lives in **boxes**. The sky is scenery, not surface.
+- **Dark Mode (Blue-Black — Default)**: The app is a dark indigo sky (`--ink` #0E1220) with faint stars. Content never floats on the sky directly — it lives in **boxes**. The sky is scenery, not surface.
+- **Light Mode (Simple Creamy Look)**: A warm, minimalist cream parchment canvas (`--ink` #FAF7F2, `--ink-2` #F0EAE1) with subtle warm ambient glow. Crisp white boxes float gently on the cream.
 
 ## 2. Everything is a box
 
@@ -24,8 +24,10 @@ gets this box — not a new style.
 
 - **Moon gold (`--moon`)** = the one primary action per screen (`.btn-moon`),
   the brand crescent, folder icons, and signature moments (MoonProgress).
+  - Dark Mode: pale moonlight gold (`#F0D9A8`, hover `#C9A96A`).
+  - Light Mode: warm honey amber / caramel gold (`#C48722`, hover `#966310`).
   If two things on a screen are gold-filled, one of them is wrong.
-- **Sky blue (`--sky`)** = links only.
+- **Sky blue (`--sky`)** = links only (`#8FB4FF` dark, `#1D64D8` light).
 - Everything else: `--text` on panels, `--muted` for secondary, `--danger` only
   for destructive/error.
 

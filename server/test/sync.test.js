@@ -1,7 +1,10 @@
 import assert from "node:assert";
+import bcrypt from "bcryptjs";
 import {
   db, createFolderNode, createFileNode, updateNode, trashNode,
   restoreNode, getDelta, getSnapshot, findVerifiedBlob,
+  createDropLink, getDropLinkByCode, getDropLinkById,
+  updateDropLink, deleteDropLink,
 } from "../src/db.js";
 
 console.log("Running server sync engine tests...");
@@ -97,4 +100,46 @@ const restored = restoreNode(file1.node.id, userId, "test-dev-1");
 assert.equal(restored.node.deleted_at, null, "File restored");
 assert.equal(restored.node.version, 3, "Version bumped on restore");
 
-console.log("All server sync engine tests PASSED successfully!");
+// 8. Test Drop Links (Send a Link)
+const drop1 = createDropLink({
+  folderId: folder1.node.id,
+  ownerId: userId,
+  title: "Client Drop",
+});
+assert.ok(drop1.id, "Drop link created");
+assert.ok(/^\d{4,5}$/.test(drop1.code), "Generated 4-digit code: " + drop1.code);
+assert.equal(drop1.folder_id, folder1.node.id);
+assert.equal(drop1.owner_id, userId);
+
+// Query by code
+const foundDrop = getDropLinkByCode(drop1.code);
+assert.ok(foundDrop, "Drop link found by 4-digit code");
+assert.equal(foundDrop.id, drop1.id);
+
+// Custom slug & Password PIN
+const customSlug = "qq-" + Date.now();
+const drop2 = createDropLink({
+  folderId: folder1.node.id,
+  ownerId: userId,
+  code: customSlug,
+  password: "1234",
+  title: "Secret Inbound",
+});
+assert.equal(drop2.code, customSlug);
+assert.ok(drop2.password_hash, "Password hash generated");
+assert.ok(bcrypt.compareSync("1234", drop2.password_hash), "Password matches hash");
+
+// Update drop link
+const updatedDrop = updateDropLink(drop2.id, userId, {
+  title: "Updated Title",
+  is_active: 0,
+});
+assert.equal(updatedDrop.title, "Updated Title");
+assert.equal(updatedDrop.is_active, 0, "Deactivated drop link");
+
+// Delete drop link
+const delRes = deleteDropLink(drop1.id, userId);
+assert.equal(delRes.ok, true, "Deleted drop link");
+assert.equal(getDropLinkById(drop1.id), undefined);
+
+console.log("All server sync engine & drop link tests PASSED successfully!");

@@ -1,6 +1,8 @@
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:google_fonts/google_fonts.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'database_helper.dart';
 import 'api_service.dart';
@@ -9,9 +11,45 @@ import 'widgets/sync_dialog.dart';
 import 'widgets/error_banner.dart';
 import 'widgets/server_config_dialog.dart';
 
+class ThemeController extends ChangeNotifier {
+  static final ThemeController instance = ThemeController._internal();
+  ThemeController._internal();
+
+  ThemeMode _mode = ThemeMode.dark;
+  ThemeMode get mode => _mode;
+  bool get isDark => _mode == ThemeMode.dark;
+
+  Future<void> init() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final saved = prefs.getString('telemoon_theme_mode');
+      if (saved == 'light') {
+        _mode = ThemeMode.light;
+      } else {
+        _mode = ThemeMode.dark;
+      }
+      notifyListeners();
+    } catch (_) {}
+  }
+
+  Future<void> toggle() async {
+    _mode = (_mode == ThemeMode.light) ? ThemeMode.dark : ThemeMode.light;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('telemoon_theme_mode', _mode == ThemeMode.light ? 'light' : 'dark');
+    } catch (_) {}
+    notifyListeners();
+  }
+}
+
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  if (Platform.isWindows || Platform.isLinux || Platform.isMacOS) {
+    sqfliteFfiInit();
+    databaseFactory = databaseFactoryFfi;
+  }
   await ApiService().init();
+  await ThemeController.instance.init();
   runApp(const TeleMoonApp());
 }
 
@@ -20,26 +58,34 @@ class TeleMoonApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    Widget initialScreen;
-    if (!ApiService().isAuthenticated) {
-      initialScreen = const AuthScreen();
-    } else if (ApiService().hasChannel) {
-      initialScreen = DriveScreen(
-        channelName: ApiService().channelId ?? (ApiService().handle != null ? '@${ApiService().handle}' : 'Telegram Drive'),
-      );
-    } else {
-      initialScreen = const LinkStorageScreen();
-    }
+    return AnimatedBuilder(
+      animation: ThemeController.instance,
+      builder: (context, _) {
+        Widget initialScreen;
+        if (!ApiService().isAuthenticated) {
+          initialScreen = const AuthScreen();
+        } else if (ApiService().hasChannel) {
+          initialScreen = DriveScreen(
+            channelName: ApiService().channelId ?? (ApiService().handle != null ? '@${ApiService().handle}' : 'Telegram Drive'),
+          );
+        } else {
+          initialScreen = const LinkStorageScreen();
+        }
 
-    return MaterialApp(
-      title: 'TeleMoon',
-      debugShowCheckedModeBanner: false,
-      theme: _buildTeleMoonTheme(),
-      home: initialScreen,
+        return MaterialApp(
+          title: 'TeleMoon',
+          debugShowCheckedModeBanner: false,
+          themeMode: ThemeController.instance.mode,
+          theme: _buildTeleMoonLightTheme(),
+          darkTheme: _buildTeleMoonDarkTheme(),
+          home: initialScreen,
+        );
+      },
     );
   }
 
-  ThemeData _buildTeleMoonTheme() {
+  // Authentic Blue-Black Night Theme (Original TeleMoon)
+  ThemeData _buildTeleMoonDarkTheme() {
     const Color ink = Color(0xFF0E1220);
     const Color ink2 = Color(0xFF121730);
     const Color panel = Color(0xFF171C30);
@@ -81,6 +127,57 @@ class TeleMoonApp extends StatelessWidget {
         style: ElevatedButton.styleFrom(
           backgroundColor: moon,
           foregroundColor: const Color(0xFF241D0E),
+          textStyle: GoogleFonts.spaceGrotesk(fontWeight: FontWeight.w600, fontSize: 16),
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
+        ),
+      ),
+    );
+  }
+
+  // Simple Creamy Light Theme
+  ThemeData _buildTeleMoonLightTheme() {
+    const Color creamBg = Color(0xFFFAF7F2);
+    const Color creamInput = Color(0xFFF0EAE1);
+    const Color whitePanel = Color(0xFFFFFFFF);
+    const Color creamLine = Color(0xFFE5DFD3);
+    const Color moonAmber = Color(0xFFC48722);
+    const Color moonDeep = Color(0xFF966310);
+    const Color darkText = Color(0xFF1C1917);
+    const Color mutedText = Color(0xFF736B5E);
+    const Color danger = Color(0xFFDC2626);
+
+    return ThemeData(
+      brightness: Brightness.light,
+      scaffoldBackgroundColor: creamBg,
+      colorScheme: const ColorScheme.light(
+        primary: moonAmber,
+        secondary: moonDeep,
+        surface: whitePanel,
+        error: danger,
+        onPrimary: Colors.white,
+        onSurface: darkText,
+      ),
+      textTheme: TextTheme(
+        headlineLarge: GoogleFonts.spaceGrotesk(color: darkText, fontWeight: FontWeight.w700, letterSpacing: -0.5),
+        headlineMedium: GoogleFonts.spaceGrotesk(color: darkText, fontWeight: FontWeight.w700),
+        titleLarge: GoogleFonts.spaceGrotesk(color: darkText, fontWeight: FontWeight.w700),
+        bodyLarge: GoogleFonts.spaceGrotesk(color: darkText),
+        bodyMedium: GoogleFonts.spaceGrotesk(color: darkText),
+        labelLarge: GoogleFonts.spaceGrotesk(color: Colors.white, fontWeight: FontWeight.w600),
+      ),
+      inputDecorationTheme: InputDecorationTheme(
+        filled: true,
+        fillColor: creamInput,
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: creamLine)),
+        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: creamLine)),
+        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: moonDeep, width: 2)),
+        hintStyle: GoogleFonts.spaceGrotesk(color: mutedText),
+      ),
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ElevatedButton.styleFrom(
+          backgroundColor: moonAmber,
+          foregroundColor: Colors.white,
           textStyle: GoogleFonts.spaceGrotesk(fontWeight: FontWeight.w600, fontSize: 16),
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 14),
@@ -142,6 +239,10 @@ class _AuthScreenState extends State<AuthScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final moonColor = isDark ? const Color(0xFFF0D9A8) : const Color(0xFFC48722);
+    final mutedColor = isDark ? const Color(0xFF9099BE) : const Color(0xFF736B5E);
+
     return Scaffold(
       body: Center(
         child: SingleChildScrollView(
@@ -150,22 +251,47 @@ class _AuthScreenState extends State<AuthScreen> {
             constraints: const BoxConstraints(maxWidth: 420),
             padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 34),
             decoration: BoxDecoration(
-              gradient: const LinearGradient(
-                colors: [Color(0xFF1D2340), Color(0xFF171C30)],
-                begin: Alignment.topCenter,
-                end: Alignment.bottomCenter,
-              ),
+              gradient: isDark
+                  ? const LinearGradient(
+                      colors: [Color(0xFF1D2340), Color(0xFF171C30)],
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                    )
+                  : const LinearGradient(
+                      colors: [Color(0xFFFFFFFF), Color(0xFFFBF8F3)],
+                      begin: Alignment.topCenter,
+                      end: Alignment.bottomCenter,
+                    ),
               borderRadius: BorderRadius.circular(18),
-              border: Border.all(color: const Color(0xFF262D4A)),
+              border: Border.all(color: isDark ? const Color(0xFF262D4A) : const Color(0xFFE5DFD3)),
+              boxShadow: [
+                BoxShadow(
+                  color: isDark ? Colors.black.withValues(alpha: 0.3) : const Color(0x14201810),
+                  blurRadius: 20,
+                  offset: const Offset(0, 10),
+                ),
+              ],
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               mainAxisSize: MainAxisSize.min,
               children: [
+                Align(
+                  alignment: Alignment.topRight,
+                  child: IconButton(
+                    tooltip: isDark ? 'Switch to Creamy Light Mode' : 'Switch to Blue-Black Dark Mode',
+                    icon: Icon(
+                      isDark ? Icons.light_mode : Icons.dark_mode,
+                      color: moonColor,
+                      size: 20,
+                    ),
+                    onPressed: () => ThemeController.instance.toggle(),
+                  ),
+                ),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const Icon(Icons.nightlight_round, color: Color(0xFFF0D9A8), size: 30),
+                    Icon(Icons.nightlight_round, color: moonColor, size: 30),
                     const SizedBox(width: 10),
                     Text('TeleMoon', style: theme.textTheme.headlineMedium),
                   ],
@@ -174,15 +300,15 @@ class _AuthScreenState extends State<AuthScreen> {
                 Text(
                   'Your Telegram storage, as a drive.',
                   textAlign: TextAlign.center,
-                  style: theme.textTheme.bodyMedium?.copyWith(color: const Color(0xFF9099BE)),
+                  style: theme.textTheme.bodyMedium?.copyWith(color: mutedColor),
                 ),
                 const SizedBox(height: 24),
                 TextField(
                   controller: _handleController,
-                  decoration: const InputDecoration(
+                  decoration: InputDecoration(
                     hintText: 'moonfriend',
                     prefixText: '@ ',
-                    prefixStyle: TextStyle(color: Color(0xFFF0D9A8), fontWeight: FontWeight.bold),
+                    prefixStyle: TextStyle(color: moonColor, fontWeight: FontWeight.bold),
                   ),
                   style: GoogleFonts.jetBrainsMono(fontSize: 14),
                 ),
@@ -202,7 +328,7 @@ class _AuthScreenState extends State<AuthScreen> {
                 ElevatedButton(
                   onPressed: _loading ? null : _login,
                   child: _loading
-                      ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF241D0E)))
+                      ? SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: isDark ? const Color(0xFF241D0E) : Colors.white))
                       : const Text('Enter'),
                 ),
                 const SizedBox(height: 18),
@@ -214,12 +340,12 @@ class _AuthScreenState extends State<AuthScreen> {
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      const Icon(Icons.settings, size: 13, color: Color(0xFF9099BE)),
+                      Icon(Icons.settings, size: 13, color: mutedColor),
                       const SizedBox(width: 6),
                       Flexible(
                         child: Text(
                           'Server: ${ApiService().baseUrl}',
-                          style: GoogleFonts.jetBrainsMono(fontSize: 11, color: const Color(0xFF9099BE)),
+                          style: GoogleFonts.jetBrainsMono(fontSize: 11, color: mutedColor),
                           overflow: TextOverflow.ellipsis,
                         ),
                       ),
@@ -429,8 +555,12 @@ class _LinkStorageScreenState extends State<LinkStorageScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
     final activeChannel = ApiService().channelId;
     final hasActiveChannel = ApiService().hasChannel;
+    final moonColor = isDark ? const Color(0xFFF0D9A8) : const Color(0xFFC48722);
+    final moonDeepColor = isDark ? const Color(0xFFC9A96A) : const Color(0xFF966310);
+    final mutedColor = isDark ? const Color(0xFF9099BE) : const Color(0xFF736B5E);
 
     return Scaffold(
       body: Center(
@@ -445,13 +575,13 @@ class _LinkStorageScreenState extends State<LinkStorageScreen> {
                   margin: const EdgeInsets.only(bottom: 20),
                   padding: const EdgeInsets.all(18),
                   decoration: BoxDecoration(
-                    color: const Color(0xFF1D2340),
+                    color: isDark ? const Color(0xFF1D2340) : const Color(0xFFF5EFE6),
                     borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: const Color(0xFFC9A96A)),
+                    border: Border.all(color: moonDeepColor),
                   ),
                   child: Row(
                     children: [
-                      const Icon(Icons.check_circle_outline, color: Color(0xFFF0D9A8), size: 28),
+                      Icon(Icons.check_circle_outline, color: moonColor, size: 28),
                       const SizedBox(width: 14),
                       Expanded(
                         child: Column(
@@ -460,14 +590,17 @@ class _LinkStorageScreenState extends State<LinkStorageScreen> {
                             Text(
                               'Account Storage Active',
                               style: theme.textTheme.titleMedium?.copyWith(
-                                color: const Color(0xFFF0D9A8),
+                                color: isDark ? moonColor : moonDeepColor,
                                 fontWeight: FontWeight.bold,
                               ),
                             ),
                             const SizedBox(height: 3),
                             Text(
                               'Linked channel: $activeChannel',
-                              style: GoogleFonts.jetBrainsMono(fontSize: 12, color: const Color(0xFFE9ECFA)),
+                              style: GoogleFonts.jetBrainsMono(
+                                fontSize: 12,
+                                color: isDark ? const Color(0xFFE9ECFA) : const Color(0xFF1C1917),
+                              ),
                             ),
                           ],
                         ),
@@ -481,8 +614,8 @@ class _LinkStorageScreenState extends State<LinkStorageScreen> {
                         },
                         style: ElevatedButton.styleFrom(
                           padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 10),
-                          backgroundColor: const Color(0xFFF0D9A8),
-                          foregroundColor: const Color(0xFF241D0E),
+                          backgroundColor: moonColor,
+                          foregroundColor: isDark ? const Color(0xFF241D0E) : Colors.white,
                         ),
                         child: const Text('Open Drive'),
                       ),
@@ -496,13 +629,26 @@ class _LinkStorageScreenState extends State<LinkStorageScreen> {
                 constraints: const BoxConstraints(maxWidth: 680),
                 padding: const EdgeInsets.all(28),
                 decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    colors: [Color(0xFF1D2340), Color(0xFF171C30)],
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                  ),
+                  gradient: isDark
+                      ? const LinearGradient(
+                          colors: [Color(0xFF1D2340), Color(0xFF171C30)],
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                        )
+                      : const LinearGradient(
+                          colors: [Color(0xFFFFFFFF), Color(0xFFFBF8F3)],
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                        ),
                   borderRadius: BorderRadius.circular(18),
-                  border: Border.all(color: const Color(0xFF262D4A)),
+                  border: Border.all(color: isDark ? const Color(0xFF262D4A) : const Color(0xFFE5DFD3)),
+                  boxShadow: [
+                    BoxShadow(
+                      color: isDark ? Colors.black.withValues(alpha: 0.3) : const Color(0x14201810),
+                      blurRadius: 20,
+                      offset: const Offset(0, 10),
+                    ),
+                  ],
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -512,13 +658,22 @@ class _LinkStorageScreenState extends State<LinkStorageScreen> {
                       children: [
                         Row(
                           children: [
-                            const Icon(Icons.nightlight_round, color: Color(0xFFF0D9A8), size: 24),
+                            Icon(Icons.nightlight_round, color: moonColor, size: 24),
                             const SizedBox(width: 10),
                             Text('Link Storage', style: theme.textTheme.headlineMedium),
                           ],
                         ),
                         Row(
                           children: [
+                            IconButton(
+                              tooltip: isDark ? 'Switch to Creamy Light Mode' : 'Switch to Blue-Black Dark Mode',
+                              icon: Icon(
+                                isDark ? Icons.light_mode : Icons.dark_mode,
+                                color: moonColor,
+                                size: 20,
+                              ),
+                              onPressed: () => ThemeController.instance.toggle(),
+                            ),
                             if (widget.canGoBack || hasActiveChannel)
                               TextButton.icon(
                                 onPressed: () {
@@ -529,17 +684,17 @@ class _LinkStorageScreenState extends State<LinkStorageScreen> {
                                     ),
                                   );
                                 },
-                                icon: const Icon(Icons.arrow_back, size: 16, color: Color(0xFFF0D9A8)),
-                                label: const Text('To Drive', style: TextStyle(color: Color(0xFFF0D9A8))),
+                                icon: Icon(Icons.arrow_back, size: 16, color: moonColor),
+                                label: Text('To Drive', style: TextStyle(color: moonColor)),
                               ),
                             IconButton(
                               tooltip: 'Sign Out',
-                              icon: const Icon(Icons.logout, color: Color(0xFF9099BE)),
+                              icon: Icon(Icons.logout, color: mutedColor),
                               onPressed: () async {
+                                final nav = Navigator.of(context);
                                 await ApiService().clearToken();
                                 if (!mounted) return;
-                                Navigator.pushReplacement(
-                                  context,
+                                nav.pushReplacement(
                                   MaterialPageRoute(builder: (_) => const AuthScreen()),
                                 );
                               },
@@ -551,7 +706,7 @@ class _LinkStorageScreenState extends State<LinkStorageScreen> {
                     const SizedBox(height: 10),
                     Text(
                       'Connect a private Telegram channel or group to store your synced files.',
-                      style: theme.textTheme.bodyMedium?.copyWith(color: const Color(0xFF9099BE)),
+                      style: theme.textTheme.bodyMedium?.copyWith(color: mutedColor),
                     ),
                     const SizedBox(height: 22),
 
@@ -562,7 +717,7 @@ class _LinkStorageScreenState extends State<LinkStorageScreen> {
                         hintText: _serverMode == 'bot'
                             ? '@channel  ·  -100...  ·  t.me/channel'
                             : 'https://t.me/+...  ·  @channel  ·  -100...',
-                        prefixIcon: const Icon(Icons.link, color: Color(0xFF9099BE)),
+                        prefixIcon: Icon(Icons.link, color: mutedColor),
                       ),
                       style: GoogleFonts.jetBrainsMono(fontSize: 14),
                       onSubmitted: (_) => _connectCustom(),
@@ -570,9 +725,9 @@ class _LinkStorageScreenState extends State<LinkStorageScreen> {
                     const SizedBox(height: 10),
                     TextField(
                       controller: _nameController,
-                      decoration: const InputDecoration(
+                      decoration: InputDecoration(
                         hintText: 'Optional Label (e.g. Personal Cloud)',
-                        prefixIcon: Icon(Icons.label_outline, color: Color(0xFF9099BE)),
+                        prefixIcon: Icon(Icons.label_outline, color: mutedColor),
                       ),
                       style: GoogleFonts.jetBrainsMono(fontSize: 14),
                       onSubmitted: (_) => _connectCustom(),
@@ -585,7 +740,7 @@ class _LinkStorageScreenState extends State<LinkStorageScreen> {
                     ElevatedButton(
                       onPressed: _connecting ? null : _connectCustom,
                       child: _connecting
-                          ? const SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: Color(0xFF241D0E)))
+                          ? SizedBox(width: 20, height: 20, child: CircularProgressIndicator(strokeWidth: 2, color: isDark ? const Color(0xFF241D0E) : Colors.white))
                           : const Text('Connect Channel'),
                     ),
                   ],
@@ -599,9 +754,14 @@ class _LinkStorageScreenState extends State<LinkStorageScreen> {
                 constraints: const BoxConstraints(maxWidth: 680),
                 padding: const EdgeInsets.all(22),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF121730),
+                  color: isDark ? const Color(0xFF121730) : Colors.white,
                   borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: const Color(0xFF262D4A)),
+                  border: Border.all(color: isDark ? const Color(0xFF262D4A) : const Color(0xFFE5DFD3)),
+                  boxShadow: isDark
+                      ? null
+                      : const [
+                          BoxShadow(color: Color(0x0A201810), blurRadius: 4, offset: Offset(0, 1)),
+                        ],
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -618,39 +778,39 @@ class _LinkStorageScreenState extends State<LinkStorageScreen> {
                         ),
                         IconButton(
                           tooltip: 'Refresh Channels',
-                          icon: const Icon(Icons.refresh, size: 18, color: Color(0xFF9099BE)),
+                          icon: Icon(Icons.refresh, size: 18, color: mutedColor),
                           onPressed: _loadingDialogs ? null : _loadServerStatusAndDialogs,
                         ),
                       ],
                     ),
                     const SizedBox(height: 12),
                     if (_loadingDialogs)
-                      const Padding(
-                        padding: EdgeInsets.symmetric(vertical: 24.0),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 24.0),
                         child: Center(
-                          child: CircularProgressIndicator(color: Color(0xFFF0D9A8), strokeWidth: 2),
+                          child: CircularProgressIndicator(color: moonColor, strokeWidth: 2),
                         ),
                       )
                     else if (_serverOffline) ...[
                       Container(
                         padding: const EdgeInsets.all(16),
                         decoration: BoxDecoration(
-                          color: const Color(0xFF171C30),
+                          color: isDark ? const Color(0xFF171C30) : const Color(0xFFF5EFE6),
                           borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: const Color(0xFF262D4A)),
+                          border: Border.all(color: isDark ? const Color(0xFF262D4A) : const Color(0xFFE5DFD3)),
                         ),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            const Text(
+                            Text(
                               'Telegram is offline on the server.',
-                              style: TextStyle(color: Color(0xFFF0D9A8), fontWeight: FontWeight.w600, fontSize: 14),
+                              style: TextStyle(color: isDark ? const Color(0xFFF0D9A8) : const Color(0xFF966310), fontWeight: FontWeight.w600, fontSize: 14),
                             ),
                             if (_serverOfflineMsg != null && _serverOfflineMsg!.isNotEmpty) ...[
                               const SizedBox(height: 6),
                               Text(
                                 _serverOfflineMsg!,
-                                style: GoogleFonts.jetBrainsMono(fontSize: 12, color: const Color(0xFF9099BE)),
+                                style: GoogleFonts.jetBrainsMono(fontSize: 12, color: mutedColor),
                               ),
                             ],
                           ],
@@ -660,23 +820,23 @@ class _LinkStorageScreenState extends State<LinkStorageScreen> {
                       Container(
                         padding: const EdgeInsets.all(16),
                         decoration: BoxDecoration(
-                          color: const Color(0xFF171C30),
+                          color: isDark ? const Color(0xFF171C30) : const Color(0xFFF5EFE6),
                           borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: const Color(0xFF262D4A)),
+                          border: Border.all(color: isDark ? const Color(0xFF262D4A) : const Color(0xFFE5DFD3)),
                         ),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
                             Row(
                               children: [
-                                const Icon(Icons.smart_toy_outlined, size: 18, color: Color(0xFFF0D9A8)),
+                                Icon(Icons.smart_toy_outlined, size: 18, color: moonColor),
                                 const SizedBox(width: 8),
                                 Text(
                                   'Bot Mode Active',
                                   style: GoogleFonts.spaceGrotesk(
                                     fontWeight: FontWeight.w600,
                                     fontSize: 14,
-                                    color: const Color(0xFFE9ECFA),
+                                    color: isDark ? const Color(0xFFE9ECFA) : const Color(0xFF1C1917),
                                   ),
                                 ),
                               ],
@@ -684,21 +844,21 @@ class _LinkStorageScreenState extends State<LinkStorageScreen> {
                             const SizedBox(height: 10),
                             Text(
                               'Telegram bots cannot automatically list your account chats. To link your channel:',
-                              style: GoogleFonts.spaceGrotesk(fontSize: 13, color: const Color(0xFF9099BE)),
+                              style: GoogleFonts.spaceGrotesk(fontSize: 13, color: mutedColor),
                             ),
                             const SizedBox(height: 10),
-                            _buildBotStep('1', 'Add your TeleMoon bot as an Admin to your Telegram channel.'),
+                            _buildBotStep('1', 'Add your TeleMoon bot as an Admin to your Telegram channel.', isDark, moonColor),
                             const SizedBox(height: 8),
-                            _buildBotStep('2', 'Paste the channel @username or ID (e.g. -100...) in the input box above.'),
+                            _buildBotStep('2', 'Paste the channel @username or ID (e.g. -100...) in the input box above.', isDark, moonColor),
                             const SizedBox(height: 8),
-                            _buildBotStep('3', 'Click "Connect Channel".'),
+                            _buildBotStep('3', 'Click "Connect Channel".', isDark, moonColor),
                           ],
                         ),
                       ),
                     ] else if (_dialogs.isNotEmpty) ...[
                       Text(
                         'Tap any channel to connect and open your drive:',
-                        style: GoogleFonts.spaceGrotesk(fontSize: 12, color: const Color(0xFF9099BE)),
+                        style: GoogleFonts.spaceGrotesk(fontSize: 12, color: mutedColor),
                       ),
                       const SizedBox(height: 12),
                       Wrap(
@@ -714,9 +874,11 @@ class _LinkStorageScreenState extends State<LinkStorageScreen> {
                               width: 200,
                               padding: const EdgeInsets.all(14),
                               decoration: BoxDecoration(
-                                color: isCurrent ? const Color(0xFF1D2340) : const Color(0xFF171C30),
+                                color: isCurrent
+                                    ? (isDark ? const Color(0xFF1D2340) : const Color(0xFFF5EFE6))
+                                    : (isDark ? const Color(0xFF171C30) : const Color(0xFFFBF8F3)),
                                 border: Border.all(
-                                  color: isCurrent ? const Color(0xFFC9A96A) : const Color(0xFF39426E),
+                                  color: isCurrent ? moonDeepColor : (isDark ? const Color(0xFF39426E) : const Color(0xFFE5DFD3)),
                                   width: isCurrent ? 2 : 1,
                                 ),
                                 borderRadius: BorderRadius.circular(12),
@@ -729,19 +891,19 @@ class _LinkStorageScreenState extends State<LinkStorageScreen> {
                                       Icon(
                                         isGroup ? Icons.groups : Icons.campaign,
                                         size: 16,
-                                        color: isCurrent ? const Color(0xFFF0D9A8) : const Color(0xFF9099BE),
+                                        color: isCurrent ? moonColor : mutedColor,
                                       ),
                                       const Spacer(),
                                       if (isCurrent)
                                         Container(
                                           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                                           decoration: BoxDecoration(
-                                            color: const Color(0xFFC9A96A).withValues(alpha: 0.2),
+                                            color: moonColor.withValues(alpha: 0.2),
                                             borderRadius: BorderRadius.circular(6),
                                           ),
-                                          child: const Text(
+                                          child: Text(
                                             'Active',
-                                            style: TextStyle(fontSize: 10, color: Color(0xFFF0D9A8), fontWeight: FontWeight.bold),
+                                            style: TextStyle(fontSize: 10, color: isDark ? moonColor : moonDeepColor, fontWeight: FontWeight.bold),
                                           ),
                                         ),
                                     ],
@@ -749,14 +911,17 @@ class _LinkStorageScreenState extends State<LinkStorageScreen> {
                                   const SizedBox(height: 8),
                                   Text(
                                     d['title']?.toString() ?? 'Unnamed',
-                                    style: theme.textTheme.titleMedium?.copyWith(fontSize: 14),
+                                    style: theme.textTheme.titleMedium?.copyWith(
+                                      fontSize: 14,
+                                      color: isDark ? const Color(0xFFE9ECFA) : const Color(0xFF1C1917),
+                                    ),
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                   ),
                                   const SizedBox(height: 4),
                                   Text(
                                     d['username'] != null ? '@${d['username']}' : (d['id']?.toString() ?? ''),
-                                    style: GoogleFonts.jetBrainsMono(fontSize: 11, color: const Color(0xFF9099BE)),
+                                    style: GoogleFonts.jetBrainsMono(fontSize: 11, color: mutedColor),
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                   ),
@@ -771,9 +936,9 @@ class _LinkStorageScreenState extends State<LinkStorageScreen> {
                         Container(
                           padding: const EdgeInsets.all(14),
                           decoration: BoxDecoration(
-                            color: const Color(0xFF171C30),
+                            color: isDark ? const Color(0xFF171C30) : const Color(0xFFFEF2F2),
                             borderRadius: BorderRadius.circular(10),
-                            border: Border.all(color: const Color(0xFF262D4A)),
+                            border: Border.all(color: isDark ? const Color(0xFF262D4A) : const Color(0xFFFECACA)),
                           ),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
@@ -785,7 +950,7 @@ class _LinkStorageScreenState extends State<LinkStorageScreen> {
                               const SizedBox(height: 6),
                               Text(
                                 'You can still paste your channel link or ID directly above.',
-                                style: GoogleFonts.spaceGrotesk(fontSize: 12, color: const Color(0xFF9099BE)),
+                                style: GoogleFonts.spaceGrotesk(fontSize: 12, color: mutedColor),
                               ),
                             ],
                           ),
@@ -793,26 +958,29 @@ class _LinkStorageScreenState extends State<LinkStorageScreen> {
                       else
                         Text(
                           'No channels listed. Paste your channel @username or ID above to link storage.',
-                          style: GoogleFonts.spaceGrotesk(fontSize: 12, color: const Color(0xFF9099BE)),
+                          style: GoogleFonts.spaceGrotesk(fontSize: 12, color: mutedColor),
                         ),
                     ],
 
                     // Saved local channels section
                     if (_savedChannels.isNotEmpty) ...[
                       const SizedBox(height: 18),
-                      const Divider(color: Color(0xFF262D4A)),
+                      Divider(color: isDark ? const Color(0xFF262D4A) : const Color(0xFFE5DFD3)),
                       const SizedBox(height: 8),
-                      Text('Previously Connected:', style: GoogleFonts.spaceGrotesk(fontSize: 12, color: const Color(0xFF9099BE))),
+                      Text('Previously Connected:', style: GoogleFonts.spaceGrotesk(fontSize: 12, color: mutedColor)),
                       const SizedBox(height: 10),
                       Wrap(
                         spacing: 8,
                         runSpacing: 8,
                         children: _savedChannels.map((item) {
                           return ActionChip(
-                            backgroundColor: const Color(0xFF171C30),
-                            side: const BorderSide(color: Color(0xFF262D4A)),
-                            label: Text(item[DatabaseHelper.columnName] ?? 'Channel'),
-                            avatar: const Icon(Icons.cloud_outlined, size: 16, color: Color(0xFFF0D9A8)),
+                            backgroundColor: isDark ? const Color(0xFF171C30) : const Color(0xFFF5EFE6),
+                            side: BorderSide(color: isDark ? const Color(0xFF262D4A) : const Color(0xFFE5DFD3)),
+                            label: Text(
+                              item[DatabaseHelper.columnName] ?? 'Channel',
+                              style: TextStyle(color: isDark ? const Color(0xFFE9ECFA) : const Color(0xFF1C1917), fontSize: 12),
+                            ),
+                            avatar: Icon(Icons.cloud_outlined, size: 16, color: moonColor),
                             onPressed: _connecting ? null : () => _selectSaved(item),
                           );
                         }).toList(),
@@ -828,7 +996,7 @@ class _LinkStorageScreenState extends State<LinkStorageScreen> {
     );
   }
 
-  Widget _buildBotStep(String step, String text) {
+  Widget _buildBotStep(String step, String text, bool isDark, Color moonColor) {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
@@ -837,13 +1005,13 @@ class _LinkStorageScreenState extends State<LinkStorageScreen> {
           height: 20,
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: const Color(0xFFF0D9A8).withValues(alpha: 0.15),
+            color: moonColor.withValues(alpha: 0.15),
             shape: BoxShape.circle,
           ),
           child: Text(
             step,
-            style: const TextStyle(
-              color: Color(0xFFF0D9A8),
+            style: TextStyle(
+              color: moonColor,
               fontSize: 11,
               fontWeight: FontWeight.bold,
             ),
@@ -856,7 +1024,7 @@ class _LinkStorageScreenState extends State<LinkStorageScreen> {
             style: GoogleFonts.spaceGrotesk(
               fontSize: 13,
               height: 1.4,
-              color: const Color(0xFFE9ECFA),
+              color: isDark ? const Color(0xFFE9ECFA) : const Color(0xFF1C1917),
             ),
           ),
         ),
@@ -981,14 +1149,16 @@ class _DriveScreenState extends State<DriveScreen> {
     await engine.toggleTracking(pathOrName);
     if (!mounted) return;
     setState(() {});
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(
           currentlyTracked
               ? 'Untracked "$pathOrName" (excluded from sync)'
               : 'Now tracking "$pathOrName" for local sync',
+          style: TextStyle(color: isDark ? const Color(0xFFE9ECFA) : Colors.white),
         ),
-        backgroundColor: const Color(0xFF1D2340),
+        backgroundColor: isDark ? const Color(0xFF1D2340) : const Color(0xFF1C1917),
         behavior: SnackBarBehavior.floating,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       ),
@@ -1007,74 +1177,96 @@ class _DriveScreenState extends State<DriveScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final moonColor = isDark ? const Color(0xFFF0D9A8) : const Color(0xFFC48722);
+    final moonDeepColor = isDark ? const Color(0xFFC9A96A) : const Color(0xFF966310);
+    final mutedColor = isDark ? const Color(0xFF9099BE) : const Color(0xFF736B5E);
+    final lineColor = isDark ? const Color(0xFF262D4A) : const Color(0xFFE5DFD3);
     final userHandle = ApiService().handle ?? 'user';
     final userAvatarChar = userHandle.isNotEmpty ? userHandle[0].toUpperCase() : 'U';
 
     final currentTrackingPath = _currentRelPath.isEmpty ? widget.channelName : _currentRelPath;
     final isCurrentFolderTracked = _isFolderTracked(currentTrackingPath);
 
+    final isCompact = MediaQuery.of(context).size.width < 560;
+
     return Scaffold(
       appBar: AppBar(
-        backgroundColor: const Color(0xFF0E1220).withValues(alpha: 0.95),
+        backgroundColor: (isDark ? const Color(0xFF0E1220) : const Color(0xFFFAF7F2)).withValues(alpha: 0.95),
         elevation: 0,
         leading: IconButton(
           tooltip: _folderStack.length > 1 ? 'Go back up' : 'Link / Switch Storage',
           icon: Icon(
             _folderStack.length > 1 ? Icons.arrow_back : Icons.swap_horiz,
-            color: const Color(0xFF9099BE),
+            color: mutedColor,
           ),
           onPressed: _navigateBack,
         ),
         title: Row(
           children: [
-            const Icon(Icons.nightlight_round, color: Color(0xFFF0D9A8), size: 24),
+            Icon(Icons.nightlight_round, color: moonColor, size: 24),
             const SizedBox(width: 8),
             Text('TeleMoon', style: theme.textTheme.titleLarge),
           ],
         ),
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(1.0),
-          child: Container(color: const Color(0xFF262D4A), height: 1.0),
+          child: Container(color: lineColor, height: 1.0),
         ),
         actions: [
           IconButton(
+            tooltip: isDark ? 'Switch to Creamy Light Mode' : 'Switch to Blue-Black Dark Mode',
+            icon: Icon(
+              isDark ? Icons.light_mode : Icons.dark_mode,
+              color: moonColor,
+            ),
+            onPressed: () => ThemeController.instance.toggle(),
+          ),
+          IconButton(
             tooltip: 'Refresh files',
-            icon: const Icon(Icons.refresh, color: Color(0xFF9099BE)),
+            icon: Icon(Icons.refresh, color: mutedColor),
             onPressed: _fetchDrive,
           ),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
-            child: ElevatedButton.icon(
+          if (isCompact)
+            IconButton(
+              tooltip: 'Sync Settings',
+              icon: Icon(Icons.sync, color: moonColor),
               onPressed: _openSyncDialog,
-              icon: const Icon(Icons.sync, size: 16),
-              label: const Text('Sync Settings'),
-              style: ElevatedButton.styleFrom(
-                backgroundColor: const Color(0xFF1D2340),
-                foregroundColor: const Color(0xFFF0D9A8),
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(999),
-                  side: const BorderSide(color: Color(0xFF39426E)),
+            )
+          else
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 8),
+              child: ElevatedButton.icon(
+                onPressed: _openSyncDialog,
+                icon: const Icon(Icons.sync, size: 16),
+                label: const Text('Sync Settings'),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: isDark ? const Color(0xFF1D2340) : const Color(0xFFF0EAE1),
+                  foregroundColor: isDark ? const Color(0xFFF0D9A8) : const Color(0xFF966310),
+                  padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(999),
+                    side: BorderSide(color: isDark ? const Color(0xFF39426E) : const Color(0xFFCEC5B4)),
+                  ),
                 ),
               ),
             ),
-          ),
           PopupMenuButton<String>(
             tooltip: '@$userHandle account menu',
             offset: const Offset(0, 50),
-            color: const Color(0xFF171C30),
+            color: isDark ? const Color(0xFF171C30) : Colors.white,
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(14),
-              side: const BorderSide(color: Color(0xFF262D4A)),
+              side: BorderSide(color: lineColor),
             ),
             child: Padding(
               padding: const EdgeInsets.only(right: 18, left: 6),
               child: CircleAvatar(
                 radius: 17,
-                backgroundColor: const Color(0xFF1D2340),
+                backgroundColor: isDark ? const Color(0xFF1D2340) : const Color(0xFFF0EAE1),
                 child: Text(
                   userAvatarChar,
-                  style: const TextStyle(color: Color(0xFFF0D9A8), fontWeight: FontWeight.bold),
+                  style: TextStyle(color: isDark ? const Color(0xFFF0D9A8) : const Color(0xFF966310), fontWeight: FontWeight.bold),
                 ),
               ),
             ),
@@ -1098,40 +1290,40 @@ class _DriveScreenState extends State<DriveScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text('@$userHandle', style: const TextStyle(fontWeight: FontWeight.bold, color: Color(0xFFE9ECFA))),
+                    Text('@$userHandle', style: TextStyle(fontWeight: FontWeight.bold, color: isDark ? const Color(0xFFE9ECFA) : const Color(0xFF1C1917))),
                     const SizedBox(height: 2),
-                    Text('Storage: ${widget.channelName}', style: const TextStyle(fontSize: 11, color: Color(0xFF9099BE))),
+                    Text('Storage: ${widget.channelName}', style: TextStyle(fontSize: 11, color: mutedColor)),
                   ],
                 ),
               ),
               const PopupMenuDivider(height: 1),
-              const PopupMenuItem<String>(
+              PopupMenuItem<String>(
                 value: 'storage',
                 child: Row(
                   children: [
-                    Icon(Icons.swap_horiz, size: 18, color: Color(0xFF9099BE)),
-                    SizedBox(width: 10),
-                    Text('Switch Storage Channel'),
+                    Icon(Icons.swap_horiz, size: 18, color: mutedColor),
+                    const SizedBox(width: 10),
+                    const Text('Switch Storage Channel'),
                   ],
                 ),
               ),
-              const PopupMenuItem<String>(
+              PopupMenuItem<String>(
                 value: 'server',
                 child: Row(
                   children: [
-                    Icon(Icons.settings, size: 18, color: Color(0xFF9099BE)),
-                    SizedBox(width: 10),
-                    Text('Server Settings'),
+                    Icon(Icons.settings, size: 18, color: mutedColor),
+                    const SizedBox(width: 10),
+                    const Text('Server Settings'),
                   ],
                 ),
               ),
-              const PopupMenuItem<String>(
+              PopupMenuItem<String>(
                 value: 'logout',
                 child: Row(
                   children: [
-                    Icon(Icons.logout, size: 18, color: Color(0xFFEE8F8F)),
-                    SizedBox(width: 10),
-                    Text('Sign Out', style: TextStyle(color: Color(0xFFEE8F8F))),
+                    Icon(Icons.logout, size: 18, color: isDark ? const Color(0xFFEE8F8F) : const Color(0xFFDC2626)),
+                    const SizedBox(width: 10),
+                    Text('Sign Out', style: TextStyle(color: isDark ? const Color(0xFFEE8F8F) : const Color(0xFFDC2626))),
                   ],
                 ),
               ),
@@ -1145,17 +1337,17 @@ class _DriveScreenState extends State<DriveScreen> {
           // BREADCRUMB BAR & "TRACK THIS FOLDER" ACTION
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 14),
-            decoration: const BoxDecoration(
-              color: Color(0xFF121730),
-              border: Border(bottom: BorderSide(color: Color(0xFF262D4A))),
+            decoration: BoxDecoration(
+              color: isDark ? const Color(0xFF121730) : const Color(0xFFF0EAE1),
+              border: Border(bottom: BorderSide(color: lineColor)),
             ),
             child: Row(
               children: [
-                const Icon(Icons.cloud_queue, size: 18, color: Color(0xFF9099BE)),
+                Icon(Icons.cloud_queue, size: 18, color: mutedColor),
                 const SizedBox(width: 8),
-                Text('Drive', style: theme.textTheme.bodyMedium?.copyWith(color: const Color(0xFF9099BE))),
+                Text('Drive', style: theme.textTheme.bodyMedium?.copyWith(color: mutedColor)),
                 const SizedBox(width: 6),
-                const Text('/', style: TextStyle(color: Color(0xFF39426E))),
+                Text('/', style: TextStyle(color: isDark ? const Color(0xFF39426E) : const Color(0xFFCEC5B4))),
                 const SizedBox(width: 6),
 
                 // Interactive Breadcrumbs
@@ -1177,18 +1369,20 @@ class _DriveScreenState extends State<DriveScreen> {
                                 child: Text(
                                   name,
                                   style: TextStyle(
-                                    color: isLast ? const Color(0xFFE9ECFA) : const Color(0xFF9099BE),
+                                    color: isLast
+                                        ? (isDark ? const Color(0xFFE9ECFA) : const Color(0xFF1C1917))
+                                        : mutedColor,
                                     fontWeight: isLast ? FontWeight.w700 : FontWeight.w500,
                                     fontSize: 14,
                                     decoration: isLast ? TextDecoration.none : TextDecoration.underline,
-                                    decorationColor: const Color(0xFF39426E),
+                                    decorationColor: isDark ? const Color(0xFF39426E) : const Color(0xFFCEC5B4),
                                   ),
                                 ),
                               ),
                             ),
                             if (!isLast) ...[
                               const SizedBox(width: 6),
-                              const Text('/', style: TextStyle(color: Color(0xFF39426E))),
+                              Text('/', style: TextStyle(color: isDark ? const Color(0xFF39426E) : const Color(0xFFCEC5B4))),
                               const SizedBox(width: 6),
                             ],
                           ],
@@ -1198,40 +1392,55 @@ class _DriveScreenState extends State<DriveScreen> {
                   ),
                 ),
 
-                const SizedBox(width: 12),
+                const SizedBox(width: 8),
 
                 // "TRACK THIS FOLDER" BUTTON
-                OutlinedButton.icon(
-                  onPressed: () => _toggleFolderTracking(currentTrackingPath),
-                  icon: Icon(
-                    isCurrentFolderTracked ? Icons.check_circle_rounded : Icons.bookmark_add_outlined,
-                    size: 16,
-                    color: isCurrentFolderTracked ? const Color(0xFFF0D9A8) : const Color(0xFF9099BE),
-                  ),
-                  label: Text(
-                    isCurrentFolderTracked ? 'Tracked for Sync' : 'Track this folder',
-                    style: TextStyle(
-                      color: isCurrentFolderTracked ? const Color(0xFFF0D9A8) : const Color(0xFFE9ECFA),
-                      fontSize: 12,
-                      fontWeight: isCurrentFolderTracked ? FontWeight.w700 : FontWeight.w500,
+                if (isCompact)
+                  IconButton(
+                    tooltip: isCurrentFolderTracked ? 'Tracked for Sync (tap to untrack)' : 'Track this folder',
+                    icon: Icon(
+                      isCurrentFolderTracked ? Icons.check_circle_rounded : Icons.bookmark_add_outlined,
+                      size: 20,
+                      color: isCurrentFolderTracked ? (isDark ? const Color(0xFFF0D9A8) : const Color(0xFF966310)) : mutedColor,
+                    ),
+                    onPressed: () => _toggleFolderTracking(currentTrackingPath),
+                  )
+                else
+                  OutlinedButton.icon(
+                    onPressed: () => _toggleFolderTracking(currentTrackingPath),
+                    icon: Icon(
+                      isCurrentFolderTracked ? Icons.check_circle_rounded : Icons.bookmark_add_outlined,
+                      size: 16,
+                      color: isCurrentFolderTracked ? (isDark ? const Color(0xFFF0D9A8) : const Color(0xFF966310)) : mutedColor,
+                    ),
+                    label: Text(
+                      isCurrentFolderTracked ? 'Tracked for Sync' : 'Track this folder',
+                      style: TextStyle(
+                        color: isCurrentFolderTracked
+                            ? (isDark ? const Color(0xFFF0D9A8) : const Color(0xFF966310))
+                            : (isDark ? const Color(0xFFE9ECFA) : const Color(0xFF1C1917)),
+                        fontSize: 12,
+                        fontWeight: isCurrentFolderTracked ? FontWeight.w700 : FontWeight.w500,
+                      ),
+                    ),
+                    style: OutlinedButton.styleFrom(
+                      side: BorderSide(
+                        color: isCurrentFolderTracked ? moonDeepColor : lineColor,
+                        width: 1.2,
+                      ),
+                      backgroundColor: isCurrentFolderTracked
+                          ? (isDark ? const Color(0xFF1D2340) : const Color(0xFFF5EFE6))
+                          : (isDark ? const Color(0xFF171C30) : Colors.white),
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                     ),
                   ),
-                  style: OutlinedButton.styleFrom(
-                    side: BorderSide(
-                      color: isCurrentFolderTracked ? const Color(0xFFC9A96A) : const Color(0xFF262D4A),
-                      width: 1.2,
-                    ),
-                    backgroundColor: isCurrentFolderTracked ? const Color(0xFF1D2340) : const Color(0xFF171C30),
-                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(999)),
-                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                  ),
-                ),
               ],
             ),
           ),
 
           if (_loading)
-            const Expanded(child: Center(child: CircularProgressIndicator(color: Color(0xFFF0D9A8))))
+            Expanded(child: Center(child: CircularProgressIndicator(color: moonColor)))
           else if (_error != null)
             Expanded(
               child: Center(
@@ -1253,8 +1462,8 @@ class _DriveScreenState extends State<DriveScreen> {
                           OutlinedButton(
                             onPressed: _goToStorageSettings,
                             style: OutlinedButton.styleFrom(
-                              side: const BorderSide(color: Color(0xFF39426E)),
-                              foregroundColor: const Color(0xFFE9ECFA),
+                              side: BorderSide(color: isDark ? const Color(0xFF39426E) : const Color(0xFFCEC5B4)),
+                              foregroundColor: isDark ? const Color(0xFFE9ECFA) : const Color(0xFF1C1917),
                             ),
                             child: const Text('Change Storage Channel'),
                           ),
@@ -1271,16 +1480,16 @@ class _DriveScreenState extends State<DriveScreen> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.cloud_queue, size: 48, color: Color(0xFF39426E)),
+                    Icon(Icons.cloud_queue, size: 48, color: isDark ? const Color(0xFF39426E) : const Color(0xFFCEC5B4)),
                     const SizedBox(height: 12),
                     Text(
                       'This folder is empty.',
-                      style: theme.textTheme.bodyMedium?.copyWith(color: const Color(0xFF9099BE)),
+                      style: theme.textTheme.bodyMedium?.copyWith(color: mutedColor),
                     ),
                     const SizedBox(height: 8),
                     Text(
                       'Use "Sync Settings" or "Track this folder" to mirror files.',
-                      style: GoogleFonts.spaceGrotesk(fontSize: 12, color: const Color(0xFF6B749E)),
+                      style: GoogleFonts.spaceGrotesk(fontSize: 12, color: isDark ? const Color(0xFF6B749E) : const Color(0xFF9E9585)),
                     ),
                   ],
                 ),
@@ -1323,9 +1532,9 @@ class _DriveScreenState extends State<DriveScreen> {
       bottomNavigationBar: Container(
         height: 38,
         padding: const EdgeInsets.symmetric(horizontal: 22),
-        decoration: const BoxDecoration(
-          color: Color(0xFF0E1220),
-          border: Border(top: BorderSide(color: Color(0xFF262D4A))),
+        decoration: BoxDecoration(
+          color: isDark ? const Color(0xFF0E1220) : const Color(0xFFFAF7F2),
+          border: Border(top: BorderSide(color: lineColor)),
         ),
         child: Row(
           children: [
@@ -1342,7 +1551,7 @@ class _DriveScreenState extends State<DriveScreen> {
             Flexible(
               child: Text(
                 'Connected: ${widget.channelName} · ${_children.length} items',
-                style: GoogleFonts.jetBrainsMono(fontSize: 11, color: const Color(0xFF9099BE)),
+                style: GoogleFonts.jetBrainsMono(fontSize: 11, color: mutedColor),
                 overflow: TextOverflow.ellipsis,
               ),
             ),
@@ -1367,10 +1576,10 @@ class _DriveScreenState extends State<DriveScreen> {
                                 : Icons.nightlight_round,
                         size: 14,
                         color: isSyncing
-                            ? const Color(0xFFF0D9A8)
+                            ? moonColor
                             : isError
-                                ? const Color(0xFFEE8F8F)
-                                : const Color(0xFFF0D9A8),
+                                ? (isDark ? const Color(0xFFEE8F8F) : const Color(0xFFDC2626))
+                                : moonColor,
                       ),
                       const SizedBox(width: 6),
                       Text(
@@ -1383,7 +1592,7 @@ class _DriveScreenState extends State<DriveScreen> {
                                     : 'Sync: All folders',
                         style: GoogleFonts.jetBrainsMono(
                           fontSize: 11,
-                          color: const Color(0xFF9099BE),
+                          color: mutedColor,
                         ),
                       ),
                     ],
@@ -1405,6 +1614,14 @@ class _DriveScreenState extends State<DriveScreen> {
     required String itemRelPath,
     required bool isTracked,
   }) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final moonColor = isDark ? const Color(0xFFF0D9A8) : const Color(0xFFC48722);
+    final moonDeepColor = isDark ? const Color(0xFFC9A96A) : const Color(0xFF966310);
+    final mutedColor = isDark ? const Color(0xFF9099BE) : const Color(0xFF736B5E);
+    final cardBorder = isTracked
+        ? (isDark ? const Color(0xFF39426E) : moonColor)
+        : (isDark ? const Color(0xFF262D4A) : const Color(0xFFE5DFD3));
+
     return InkWell(
       onTap: () {
         if (isFolder) {
@@ -1412,8 +1629,11 @@ class _DriveScreenState extends State<DriveScreen> {
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-              content: Text('File: $name ($meta)'),
-              backgroundColor: const Color(0xFF1D2340),
+              content: Text(
+                'File: $name ($meta)',
+                style: TextStyle(color: isDark ? const Color(0xFFE9ECFA) : Colors.white),
+              ),
+              backgroundColor: isDark ? const Color(0xFF1D2340) : const Color(0xFF1C1917),
               behavior: SnackBarBehavior.floating,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
             ),
@@ -1424,12 +1644,17 @@ class _DriveScreenState extends State<DriveScreen> {
       child: Container(
         padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
-          color: const Color(0xFF171C30),
+          color: isDark ? const Color(0xFF171C30) : Colors.white,
           border: Border.all(
-            color: isTracked ? const Color(0xFF39426E) : const Color(0xFF262D4A),
+            color: cardBorder,
             width: isTracked ? 1.5 : 1.0,
           ),
           borderRadius: BorderRadius.circular(14),
+          boxShadow: isDark
+              ? null
+              : const [
+                  BoxShadow(color: Color(0x0A201810), blurRadius: 4, offset: Offset(0, 1)),
+                ],
         ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -1439,7 +1664,7 @@ class _DriveScreenState extends State<DriveScreen> {
               children: [
                 Icon(
                   isFolder ? Icons.folder : Icons.insert_drive_file,
-                  color: isFolder ? const Color(0xFFF0D9A8) : const Color(0xFF9099BE),
+                  color: isFolder ? moonColor : mutedColor,
                   size: 28,
                 ),
                 // Tracking toggle icon button on card
@@ -1449,7 +1674,7 @@ class _DriveScreenState extends State<DriveScreen> {
                   icon: Icon(
                     isTracked ? Icons.bookmark : Icons.bookmark_border,
                     size: 18,
-                    color: isTracked ? const Color(0xFFF0D9A8) : const Color(0xFF9099BE),
+                    color: isTracked ? moonColor : mutedColor,
                   ),
                   tooltip: isTracked ? 'Tracked for Sync (tap to untrack)' : 'Track for Sync',
                   onPressed: () => _toggleFolderTracking(itemRelPath),
@@ -1459,7 +1684,11 @@ class _DriveScreenState extends State<DriveScreen> {
             const Spacer(),
             Text(
               name,
-              style: const TextStyle(color: Color(0xFFE9ECFA), fontSize: 13, fontWeight: FontWeight.w600),
+              style: TextStyle(
+                color: isDark ? const Color(0xFFE9ECFA) : const Color(0xFF1C1917),
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+              ),
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
             ),
@@ -1467,21 +1696,21 @@ class _DriveScreenState extends State<DriveScreen> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(meta, style: GoogleFonts.jetBrainsMono(fontSize: 11, color: const Color(0xFF9099BE))),
+                Text(meta, style: GoogleFonts.jetBrainsMono(fontSize: 11, color: mutedColor)),
                 if (isTracked)
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                     decoration: BoxDecoration(
-                      color: const Color(0xFF1D2340),
+                      color: isDark ? const Color(0xFF1D2340) : const Color(0xFFF5EFE6),
                       borderRadius: BorderRadius.circular(6),
-                      border: Border.all(color: const Color(0xFFC9A96A), width: 0.8),
+                      border: Border.all(color: isDark ? moonDeepColor : moonColor, width: 0.8),
                     ),
-                    child: const Text(
+                    child: Text(
                       'TRACKED',
                       style: TextStyle(
                         fontSize: 9,
                         fontWeight: FontWeight.w700,
-                        color: Color(0xFFF0D9A8),
+                        color: isDark ? moonColor : moonDeepColor,
                         letterSpacing: 0.4,
                       ),
                     ),
