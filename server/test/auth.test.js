@@ -125,7 +125,16 @@ try {
   });
   assert.equal(secondLogin.data.user.channel_id, testChannelId, "Subsequent login reflects linked channel");
 
-  // 9. Test /api/auth/logout
+  // 9. Test /api/tg/connect robust error handling (must never 500 on client input)
+  const emptyConn = await req("POST", "/tg/connect", { link: "" }, userToken);
+  assert.equal(emptyConn.status, 400, "Empty link returns 400 Bad Request, not 500");
+  assert.ok(emptyConn.data.error, "Returns clear error message");
+
+  const invalidConn = await req("POST", "/tg/connect", { link: "https://t.me/c/not_a_number/test" }, userToken);
+  assert.ok(invalidConn.status === 400 || invalidConn.status === 503, "Invalid link returns 400 or 503 offline, never 500");
+  assert.notEqual(invalidConn.status, 500, "Invalid connect never returns 500 Internal Server Error");
+
+  // 10. Test /api/auth/logout
   const logoutRes = await req("POST", "/auth/logout");
   assert.equal(logoutRes.status, 200, "/api/auth/logout returns 200");
   assert.equal(logoutRes.data.ok, true);

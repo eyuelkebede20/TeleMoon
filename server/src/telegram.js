@@ -78,53 +78,118 @@ export async function setChannel(refOrEntity) {
   if (typeof ent !== "object" || !ent?.className) {
     ent = await resolvePeer(ent);
   }
-  if (ent.className !== "Channel" && ent.className !== "Chat")
-    throw err("TeleMoon needs a channel or group — private user chats aren't supported");
+  if (!ent || (ent.className !== "Channel" && ent.className !== "Chat")) {
+    if (ent?.className?.includes("Forbidden")) {
+      throw err("TeleMoon cannot access this channel — it was kicked or access is forbidden", 403);
+    }
+    throw err("TeleMoon needs a channel or group — private user chats aren't supported", 400);
+  }
   tg.channel = ent;
   tg.ready = true;
   tg.error = null;
   const isChannel = ent.className === "Channel";
   const formattedId = isChannel ? `-100${ent.id.toString()}` : `-${ent.id.toString()}`;
   setSetting("channel", formattedId);
-  return { id: formattedId, title: ent.title };
+  return { id: formattedId, title: ent.title || "Untitled" };
 }
 
-/** Accepts t.me/+HASH invite links, t.me/name, @name, or a -100… id. */
+/** Accepts t.me/+HASH invite links, t.me/c/... channel links, t.me/name, @name, or IDs. */
 export async function connectByLink(link) {
   if (!tg.client) throw err(tg.error || "Telegram offline", 503);
   const raw = String(link || "").trim();
-  if (!raw) throw err("paste a link first");
+  if (!raw) throw err("Please enter a channel link, @username, or chat ID", 400);
 
-  const invite = raw.match(/(?:t\.me\/|telegram\.me\/)?(?:joinchat\/|\+)([A-Za-z0-9_-]{8,})\/?$/);
+  // Private channel link: https://t.me/c/1234567890 or https://t.me/c/1234567890/123
+  const cMatch = raw.match(/(?:t\.me\/|telegram\.me\/)c\/(\d+)(?:\/\d+)?/i);
+  if (cMatch) {
+    return await setChannel(`-100${cMatch[1]}`);
+  }
+
+  // Invite links: t.me/+HASH or t.me/joinchat/HASH
+  const invite = raw.match(/(?:t\.me\/|telegram\.me\/)?(?:joinchat\/|\+)([A-Za-z0-9_-]{8,})/i);
   if (invite) {
-    if (tg.mode === "bot")
+    if (tg.mode === "bot") {
       throw err(
-        "bots can't follow invite links — add the bot to the channel as admin, " +
-          "then paste the channel's @name or -100… id (or switch to a user session: npm run login)"
+        "Telegram bots cannot follow invite links. Please add your bot to the channel/group as an Administrator, then enter the channel's @username or ID (-100...)",
+        400
       );
+    }
     const hash = invite[1];
     try {
       const upd = await tg.client.invoke(new Api.messages.ImportChatInvite({ hash }));
-      return await setChannel(upd.chats?.[0]);
+      const chat = upd.chats?.[0];
+      if (chat) return await setChannel(chat);
     } catch (e) {
-      if (/ALREADY_PARTICIPANT/.test(e.errorMessage || e.message || "")) {
-        const info = await tg.client.invoke(new Api.messages.CheckChatInvite({ hash }));
-        if (info.chat) return await setChannel(info.chat);
+      const errMsg = e.errorMessage || e.message || "";
+      if (/ALREADY_PARTICIPANT/.test(errMsg)) {
+        try {
+          const info = await tg.client.invoke(new Api.messages.CheckChatInvite({ hash }));
+          if (info.chat) return await setChannel(info.chat);
+        } catch (_) {}
+
+        try {
+          const dialogs = await tg.client.getDialogs({ limit: 150 });
+          const groupOrChan = dialogs.find(
+            (d) => d.entity && (d.entity.className === "Channel" || d.entity.className === "Chat")
+          );
+          if (groupOrChan?.entity) return await setChannel(groupOrChan.entity);
+        } catch (_) {}
+
+        throw err("You are already a participant in this chat. Please select it from your channels list below or enter its ID.", 400);
       }
-      if (/INVITE_HASH/.test(e.errorMessage || "")) throw err("that invite link is invalid or expired");
-      throw e;
+      if (/INVITE_HASH/.test(errMsg)) {
+        throw err("That Telegram invite link is invalid or has expired.", 400);
+      }
+      if (/CHANNELS_TOO_MUCH/.test(errMsg)) {
+        throw err("Your Telegram account is in too many channels or groups. Please leave some before joining new ones.", 400);
+      }
+      if (/USERS_TOO_MUCH/.test(errMsg)) {
+        throw err("This Telegram channel or group has reached its maximum member limit.", 400);
+      }
+      if (/INVITE_REQUEST_SENT/.test(errMsg)) {
+        throw err("A request to join this channel was sent. Please approve it in Telegram, then connect again.", 400);
+      }
+      throw err(errMsg || "Failed to join Telegram channel via invite link", 400);
     }
   }
 
-  const uname = raw.match(/(?:t\.me|telegram\.me)\/([A-Za-z]\w{3,})\/?$/)?.[1];
-  return setChannel(uname ? `@${uname}` : raw);
+  // Public channel link: https://t.me/username or https://t.me/username/123
+  const pubMatch = raw.match(/(?:t\.me\/|telegram\.me\/)([A-Za-z]\w{3,})(?:\/\d+)?/i);
+  if (pubMatch && !["joinchat", "c"].includes(pubMatch[1].toLowerCase())) {
+    return await setChannel(`@${pubMatch[1]}`);
+  }
+
+  // Direct channel or group ID
+  if (/^-?100\d+$/.test(raw)) {
+    const formatted = raw.startsWith("-") ? raw : `-${raw}`;
+    return await setChannel(formatted);
+  }
+  if (/^-\d+$/.test(raw)) {
+    return await setChannel(raw);
+  }
+  if (/^\d{10,}$/.test(raw)) {
+    return await setChannel(`-100${raw}`);
+  }
+  if (/^\d{5,9}$/.test(raw)) {
+    return await setChannel(`-${raw}`);
+  }
+
+  // Username format: @name or clean name
+  if (raw.startsWith("@")) {
+    return await setChannel(raw);
+  }
+  if (/^[A-Za-z]\w{3,32}$/.test(raw)) {
+    return await setChannel(`@${raw}`);
+  }
+
+  return await setChannel(raw);
 }
 
 /** Channels & groups this account has accessed (user session only). */
 export async function listDialogs() {
   if (!tg.client) throw err(tg.error || "Telegram offline", 503);
   if (tg.mode === "bot")
-    throw err("browsing your chats needs a user session (npm run login) — bots can't list dialogs");
+    throw err("browsing your chats needs a user session (npm run login) — bots can't list dialogs", 400);
   const dialogs = await tg.client.getDialogs({ limit: 200 });
   return dialogs
     .filter((d) => d.entity?.className === "Channel" || d.entity?.className === "Chat")
@@ -147,7 +212,20 @@ export async function resolvePeer(refOrEntity) {
   if (!refOrEntity) return tg.channel;
   if (typeof refOrEntity === "object" && refOrEntity.className) return refOrEntity;
 
-  const r = String(refOrEntity).trim();
+  let r = String(refOrEntity).trim();
+
+  // Strip t.me/c/... if passed directly
+  const cMatch = r.match(/(?:t\.me\/|telegram\.me\/)c\/(\d+)/i);
+  if (cMatch) {
+    r = `-100${cMatch[1]}`;
+  } else {
+    // Strip public t.me/... if passed directly
+    const pubMatch = r.match(/(?:t\.me\/|telegram\.me\/)([A-Za-z]\w{3,})/i);
+    if (pubMatch && !["joinchat", "c"].includes(pubMatch[1].toLowerCase())) {
+      r = `@${pubMatch[1]}`;
+    }
+  }
+
   if (tg.channel) {
     const chanIdStr = tg.channel.id.toString();
     const cleanR = r.replace(/^-100/, "").replace(/^-/, "");
@@ -161,24 +239,49 @@ export async function resolvePeer(refOrEntity) {
     targetId = `-100${targetId}`;
   } else if (!targetId.startsWith("@") && !targetId.startsWith("-") && /^\d+$/.test(targetId)) {
     targetId = `-${targetId}`;
+  } else if (!targetId.startsWith("@") && !targetId.startsWith("-") && /^[A-Za-z]\w{3,32}$/.test(targetId)) {
+    targetId = `@${targetId}`;
   }
 
   try {
     return await tg.client.getEntity(/^-?\d+$/.test(targetId) ? bigInt(targetId) : targetId.startsWith("@") ? targetId : `@${targetId}`);
   } catch (err1) {
-    try {
-      const dialogs = await tg.client.getDialogs({ limit: 150 });
-      const cleanT = targetId.replace(/^-100/, "").replace(/^-/, "");
-      const found = dialogs.find((d) => {
-        if (!d.entity) return false;
-        const eid = d.entity.id?.toString();
-        const uname = d.entity.username?.toLowerCase();
-        const matchUname = targetId.startsWith("@") ? targetId.slice(1).toLowerCase() : targetId.toLowerCase();
-        return eid === cleanT || (uname && uname === matchUname);
-      });
-      if (found?.entity) return found.entity;
-    } catch (_) {}
-    throw err1;
+    if (tg.mode !== "bot") {
+      try {
+        const dialogs = await tg.client.getDialogs({ limit: 150 });
+        const cleanT = targetId.replace(/^-100/, "").replace(/^-/, "");
+        const found = dialogs.find((d) => {
+          if (!d.entity) return false;
+          const eid = d.entity.id?.toString();
+          const uname = d.entity.username?.toLowerCase();
+          const matchUname = targetId.startsWith("@") ? targetId.slice(1).toLowerCase() : targetId.toLowerCase();
+          return eid === cleanT || (uname && uname === matchUname);
+        });
+        if (found?.entity) return found.entity;
+      } catch (_) {}
+    }
+
+    const msg = err1.errorMessage || err1.message || "";
+    if (/CHANNEL_INVALID|CHAT_INVALID|Could not find input entity|Cannot find any entity/i.test(msg)) {
+      if (tg.mode === "bot") {
+        throw err(
+          "TeleMoon cannot access this channel/group. Make sure your Telegram bot is added to the channel as an Administrator with post/read permissions, then try again.",
+          400
+        );
+      } else {
+        throw err(
+          "TeleMoon could not find or access this Telegram channel. Make sure your account is a member or admin of the channel and check the link/ID.",
+          400
+        );
+      }
+    }
+    if (/USERNAME_NOT_OCCUPIED|USERNAME_INVALID/i.test(msg)) {
+      throw err(`The Telegram channel or group "${targetId}" does not exist. Please check for typos.`, 404);
+    }
+    if (/CHAT_ADMIN_REQUIRED|CHAT_WRITE_FORBIDDEN/i.test(msg)) {
+      throw err("Administrator permissions are required in this Telegram channel/group to connect storage.", 403);
+    }
+    throw err(msg || "Could not resolve Telegram channel", 400);
   }
 }
 
@@ -197,80 +300,88 @@ export async function syncChannelHistory({ peerRef, ownerId, limit = 1000 } = {}
   let imported = 0;
   let skipped = 0;
 
-  for await (const m of tg.client.iterMessages(entity, { limit })) {
-    scanned++;
-    if (!m) continue;
+  try {
+    for await (const m of tg.client.iterMessages(entity, { limit })) {
+      scanned++;
+      if (!m) continue;
 
-    // Skip TeleMoon multipart uploads
-    if ((m.message || "").startsWith("tm1;")) {
-      skipped++;
-      continue;
-    }
-
-    const doc = m.media?.document;
-    const photo = m.media?.photo;
-    if (!doc && !photo) continue;
-
-    // Skip stickers
-    if (doc?.attributes?.some((a) => a.className === "DocumentAttributeSticker")) {
-      continue;
-    }
-
-    // Already indexed in our database
-    if (existingMsgIds.has(m.id)) {
-      skipped++;
-      continue;
-    }
-
-    let name;
-    let size = 0;
-    let mime = null;
-
-    if (doc) {
-      const fnAttr = doc.attributes?.find(
-        (a) => a.className === "DocumentAttributeFilename"
-      );
-      name = fnAttr?.fileName;
-      if (!name) {
-        const audioAttr = doc.attributes?.find(
-          (a) => a.className === "DocumentAttributeAudio"
-        );
-        if (audioAttr?.title) {
-          name = `${audioAttr.performer ? audioAttr.performer + " - " : ""}${audioAttr.title}`;
-          const ext = doc.mimeType?.includes("ogg") ? ".ogg" : doc.mimeType?.includes("mp3") ? ".mp3" : ".m4a";
-          if (!name.endsWith(ext)) name += ext;
-        } else if (doc.attributes?.some((a) => a.className === "DocumentAttributeVideo")) {
-          name = `video_${m.id}.mp4`;
-        } else {
-          const ext = doc.mimeType ? `.${doc.mimeType.split("/")[1] || "bin"}` : "";
-          name = `telegram_${m.id}${ext}`;
-        }
+      // Skip TeleMoon multipart uploads
+      if ((m.message || "").startsWith("tm1;")) {
+        skipped++;
+        continue;
       }
-      size = Number(doc.size?.toString?.() ?? doc.size);
-      mime = doc.mimeType || null;
-    } else if (photo) {
-      const sizes = photo.sizes || [];
-      const large = sizes[sizes.length - 1];
-      size = Number(large?.size || (large?.w && large?.h ? Math.round(large.w * large.h * 0.3) : 100000));
-      mime = "image/jpeg";
-      const caption = (m.message || "").trim().slice(0, 40).replace(/[/\\]/g, "-");
-      name = caption ? `${caption}_${m.id}.jpg` : `photo_${m.id}.jpg`;
+
+      const doc = m.media?.document;
+      const photo = m.media?.photo;
+      if (!doc && !photo) continue;
+
+      // Skip stickers
+      if (doc?.attributes?.some((a) => a.className === "DocumentAttributeSticker")) {
+        continue;
+      }
+
+      // Already indexed in our database
+      if (existingMsgIds.has(m.id)) {
+        skipped++;
+        continue;
+      }
+
+      let name;
+      let size = 0;
+      let mime = null;
+
+      if (doc) {
+        const fnAttr = doc.attributes?.find(
+          (a) => a.className === "DocumentAttributeFilename"
+        );
+        name = fnAttr?.fileName;
+        if (!name) {
+          const audioAttr = doc.attributes?.find(
+            (a) => a.className === "DocumentAttributeAudio"
+          );
+          if (audioAttr?.title) {
+            name = `${audioAttr.performer ? audioAttr.performer + " - " : ""}${audioAttr.title}`;
+            const ext = doc.mimeType?.includes("ogg") ? ".ogg" : doc.mimeType?.includes("mp3") ? ".mp3" : ".m4a";
+            if (!name.endsWith(ext)) name += ext;
+          } else if (doc.attributes?.some((a) => a.className === "DocumentAttributeVideo")) {
+            name = `video_${m.id}.mp4`;
+          } else {
+            const ext = doc.mimeType ? `.${doc.mimeType.split("/")[1] || "bin"}` : "";
+            name = `telegram_${m.id}${ext}`;
+          }
+        }
+        size = Number(doc.size?.toString?.() ?? doc.size);
+        mime = doc.mimeType || null;
+      } else if (photo) {
+        const sizes = photo.sizes || [];
+        const large = sizes[sizes.length - 1];
+        size = Number(large?.size || (large?.w && large?.h ? Math.round(large.w * large.h * 0.3) : 100000));
+        mime = "image/jpeg";
+        const caption = (m.message || "").trim().slice(0, 40).replace(/[/\\]/g, "-");
+        name = caption ? `${caption}_${m.id}.jpg` : `photo_${m.id}.jpg`;
+      }
+
+      name = String(name || `telegram_${m.id}`).replace(/[/\\]/g, "-").trim() || `telegram_${m.id}`;
+      if (!size || isNaN(size)) continue;
+
+      createFileNode({
+        parentId: inbox.id,
+        name,
+        size,
+        mime,
+        ownerId: ownerId || null,
+        parts: [{ msg_id: m.id, size }],
+      });
+
+      existingMsgIds.add(m.id);
+      imported++;
     }
-
-    name = String(name || `telegram_${m.id}`).replace(/[/\\]/g, "-").trim() || `telegram_${m.id}`;
-    if (!size || isNaN(size)) continue;
-
-    createFileNode({
-      parentId: inbox.id,
-      name,
-      size,
-      mime,
-      ownerId: ownerId || null,
-      parts: [{ msg_id: m.id, size }],
-    });
-
-    existingMsgIds.add(m.id);
-    imported++;
+  } catch (iterErr) {
+    const iterMsg = iterErr.errorMessage || iterErr.message || "";
+    if (/CHAT_ADMIN_REQUIRED|CHANNEL_PRIVATE|USER_NOT_PARTICIPANT/i.test(iterMsg)) {
+      throw err("TeleMoon cannot read history from this channel. Ensure the bot/account is a member/admin with permission to read messages.", 403);
+    }
+    throw err(iterMsg || "Failed to scan Telegram history", 400);
   }
 
   return { scanned, imported, skipped, folderId: inbox.id, folderName: inbox.name };

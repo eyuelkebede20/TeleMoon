@@ -223,23 +223,35 @@ api.get("/tg/dialogs", auth, async (_req, res) => {
   try {
     res.json({ dialogs: await listDialogs(), mode: tg.mode });
   } catch (e) {
-    bad(res, e.status || 500, e.errorMessage || e.message);
+    const code = e.status || (/offline/i.test(e.message) ? 503 : 400);
+    bad(res, code, e.errorMessage || e.message);
   }
 });
 
 api.post("/user/channel", auth, async (req, res) => {
-  let { channel_id } = req.body;
-  if (!channel_id) return bad(res, 400, "channel_id required");
-  channel_id = String(channel_id).trim();
+  try {
+    let { channel_id } = req.body;
+    if (!channel_id) return bad(res, 400, "channel_id required");
+    channel_id = String(channel_id).trim();
 
-  if (channel_id.includes("t.me") || channel_id.includes("telegram.me")) {
-    return bad(res, 400, "Please paste the channel ID (e.g. -100...) or @username, not an invite link.");
+    // If a link or username was passed, route through connectByLink for full validation
+    if (channel_id.includes("t.me") || channel_id.includes("telegram.me") || channel_id.startsWith("@")) {
+      const channel = await connectByLink(channel_id);
+      if (channel?.id) {
+        q(`UPDATE users SET channel_id=? WHERE id=?`).run(channel.id, req.user.id);
+        return res.json({ ok: true, channel_id: channel.id, title: channel.title });
+      }
+    }
+
+    if (/^\d{10,}$/.test(channel_id)) channel_id = `-100${channel_id}`;
+    else if (/^\d{5,9}$/.test(channel_id)) channel_id = `-${channel_id}`;
+
+    q(`UPDATE users SET channel_id=? WHERE id=?`).run(channel_id, req.user.id);
+    res.json({ ok: true, channel_id });
+  } catch (e) {
+    const code = e.status || (/offline/i.test(e.message) ? 503 : 400);
+    bad(res, code, e.errorMessage || e.message);
   }
-
-  if (/^\d{10,}$/.test(channel_id)) channel_id = `-100${channel_id}`;
-
-  q(`UPDATE users SET channel_id=? WHERE id=?`).run(channel_id, req.user.id);
-  res.json({ ok: true, channel_id });
 });
 
 api.post("/tg/connect", auth, async (req, res) => {
@@ -254,7 +266,8 @@ api.post("/tg/connect", auth, async (req, res) => {
     }
     res.json(channel);
   } catch (e) {
-    bad(res, e.status || 500, e.errorMessage || e.message);
+    const code = e.status || (/offline/i.test(e.message) ? 503 : 400);
+    bad(res, code, e.errorMessage || e.message);
   }
 });
 
@@ -274,7 +287,8 @@ api.post("/tg/sync", auth, async (req, res) => {
     emitSyncChange(req.user.id, 0);
     res.json({ ok: true, ...result });
   } catch (e) {
-    bad(res, e.status || 500, e.message);
+    const code = e.status || (/offline/i.test(e.message) ? 503 : 400);
+    bad(res, code, e.errorMessage || e.message);
   }
 });
 

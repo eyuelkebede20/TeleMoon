@@ -29,13 +29,17 @@ export default function Connect({ status, user, canSkip, onDone, onLogout, onUse
     try {
       let channelId = ref;
       let title = titleHint || ref;
-      if (typeof ref === "string" && (ref.includes("t.me") || ref.includes("telegram.me") || ref.startsWith("@"))) {
+      try {
         const res = await api.connect(ref);
-        channelId = res.id;
+        channelId = res.id || channelId;
         title = res.title || title;
-      } else {
-        const res = await api.saveChannel(ref);
-        if (res?.channel_id) channelId = res.channel_id;
+      } catch (connErr) {
+        if (typeof ref === "string" && /^-?\d+$/.test(ref.trim())) {
+          const res = await api.saveChannel(ref);
+          if (res?.channel_id) channelId = res.channel_id;
+        } else {
+          throw connErr;
+        }
       }
       
       // Update local storage and notify parent component so the UI knows they have a channel
