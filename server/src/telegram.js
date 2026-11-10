@@ -7,10 +7,8 @@ import eventsMod from "telegram/events/index.js";
 import bigInt from "big-integer";
 import { cfg } from "./config.js";
 import {
-  q, now, ensureInboxFolder, createFileNode, getStorage, getStorageByChannel,
-  activateStorage, getActiveStorage,
+  ensureInboxFolder, createFileNode, getSetting, setSetting, getIndexedMessageIds,
 } from "./db.js";
-import { hashPairingCode, normalizePairingCode } from "./pairing.js";
 
 const { TelegramClient, Api } = telegram;
 const { StringSession } = sessionsMod;
@@ -18,11 +16,10 @@ const { NewMessage } = eventsMod;
 
 export const tg = {
   client: null,
-  ready: false, // Telegram client authenticated; users pair channels separately
+  channel: null, // resolved entity
+  ready: false,
   mode: null, // "bot" | "user"
-  botUsername: cfg.botUsername,
   error: null,
-  channels: new Map(), // storage id -> resolved Telegram entity
 };
 
 const err = (msg, status = 400) => Object.assign(new Error(msg), { status });
@@ -35,22 +32,11 @@ export async function initTelegram() {
   }
 
   const client = new TelegramClient(
-    new sessionsMod.StoreSession(cfg.dataDir),
+    new StringSession(cfg.session || ""),
     cfg.apiId,
     cfg.apiHash,
     { connectionRetries: 5 }
   );
-
-  await client.session.load();
-
-  // Load the env session string if we have a fresh StoreSession
-  if (cfg.session && !client.session.authKey) {
-    const temp = new StringSession(cfg.session);
-    await temp.load();
-    client.session.setDC(temp.dcId, temp.serverAddress, temp.port);
-    client.session.authKey = temp.authKey;
-  }
-
 
   if (cfg.botToken) {
     await client.start({ botAuthToken: cfg.botToken });
@@ -60,129 +46,263 @@ export async function initTelegram() {
     tg.mode = "user";
   }
   tg.client = client;
-  tg.ready = true;
-  tg.error = null;
-  const exportSession = new StringSession("");
-  exportSession.setDC(client.session.dcId, client.session.serverAddress, client.session.port);
-  exportSession.authKey = client.session.authKey;
-
   console.log(
     `[tg] connected (${tg.mode}). Tip: set TG_SESSION to reuse this session:\n` +
-      `TG_SESSION=${exportSession.save()}`
+      `TG_SESSION=${client.session.save()}`
   );
 
-  // One handler completes channel pairing and indexes documents posted
-  // directly into any channel paired with this deployment.
-  client.addEventHandler(handleChannelPost, new NewMessage({}));
-  console.log(`[tg] ready for per-user channel pairing`);
-  drainDeletionQueue().catch((error) => console.warn("[tg] deletion queue:", error.message));
-}
+  // One handler covers both jobs: while no channel is linked it echoes ids
+  // (bot-mode setup aid); once linked it indexes foreign document posts.
+  client.addEventHandler(onChannelPost, new NewMessage({}));
 
-export const telegramChannelId = (entityOrId) => {
-  const source = entityOrId && entityOrId.id !== undefined ? entityOrId.id : entityOrId;
-  const raw = String(source?.toString?.() ?? source);
-  return raw.startsWith("-100") ? raw : `-100${raw.replace(/^-/, "")}`;
-};
-
-async function channelForStorage(storageId) {
-  if (!tg.ready || !tg.client) throw err(tg.error || "Telegram offline", 503);
-  if (tg.channels.has(storageId)) return tg.channels.get(storageId);
-  const storage = getStorage(storageId);
-  if (!storage) throw err("Telegram storage connection not found", 502);
-  const entity = await tg.client.getEntity(bigInt(storage.telegram_channel_id));
-  if (entity.className !== "Channel") throw err("paired Telegram destination is not a channel", 502);
-  if (entity.title && entity.title !== storage.channel_title) {
-    q(`UPDATE storage_connections SET channel_title=? WHERE id=?`).run(entity.title, storage.id);
+  // Channel: DB setting (linked from the UI) wins; TG_CHANNEL_ID is a seed.
+  const saved = getSetting("channel") || cfg.channel;
+  if (!saved) {
+    tg.error = "no storage linked yet — paste a channel link in the app";
+    console.log(`[tg] ${tg.error}`);
+    return;
   }
-  tg.channels.set(storageId, entity);
-  return entity;
+  try {
+    const { title } = await setChannel(saved);
+    console.log(`[tg] storage channel: "${title}"`);
+  } catch (e) {
+    tg.error = `stored channel unreachable: ${e.message}`;
+    console.warn(`[tg] ${tg.error}`);
+  }
 }
 
-export async function connectByLink(raw) {
+/** Point storage at a channel/supergroup; persists across restarts. */
+export async function setChannel(refOrEntity) {
+  if (!tg.client) throw err("Telegram offline", 503);
+  let ent = refOrEntity;
+  if (typeof ent !== "object" || !ent?.className) {
+    ent = await resolvePeer(ent);
+  }
+  if (ent.className !== "Channel" && ent.className !== "Chat")
+    throw err("TeleMoon needs a channel or group — private user chats aren't supported");
+  tg.channel = ent;
+  tg.ready = true;
+  tg.error = null;
+  const isChannel = ent.className === "Channel";
+  const formattedId = isChannel ? `-100${ent.id.toString()}` : `-${ent.id.toString()}`;
+  setSetting("channel", formattedId);
+  return { id: formattedId, title: ent.title };
+}
+
+/** Accepts t.me/+HASH invite links, t.me/name, @name, or a -100… id. */
+export async function connectByLink(link) {
   if (!tg.client) throw err(tg.error || "Telegram offline", 503);
-  if (/^https?:\/\/(t\.me|telegram\.me)\/\+/.test(raw)) {
+  const raw = String(link || "").trim();
+  if (!raw) throw err("paste a link first");
+
+  const invite = raw.match(/(?:t\.me\/|telegram\.me\/)?(?:joinchat\/|\+)([A-Za-z0-9_-]{8,})\/?$/);
+  if (invite) {
     if (tg.mode === "bot")
       throw err(
-        "bot mode cannot join via invite link — add the bot to the channel as admin manually, then provide the channel @name or -100... id"
+        "bots can't follow invite links — add the bot to the channel as admin, " +
+          "then paste the channel's @name or -100… id (or switch to a user session: npm run login)"
       );
-    const invite = raw.match(/\+([A-Za-z0-9_-]+)/);
-    if (!invite) throw err("invalid invite link");
     const hash = invite[1];
     try {
       const upd = await tg.client.invoke(new Api.messages.ImportChatInvite({ hash }));
-      return upd.chats?.[0]; // return channel entity
+      return await setChannel(upd.chats?.[0]);
     } catch (e) {
       if (/ALREADY_PARTICIPANT/.test(e.errorMessage || e.message || "")) {
         const info = await tg.client.invoke(new Api.messages.CheckChatInvite({ hash }));
-        if (info.chat) return info.chat;
+        if (info.chat) return await setChannel(info.chat);
       }
       if (/INVITE_HASH/.test(e.errorMessage || "")) throw err("that invite link is invalid or expired");
       throw e;
     }
   }
 
-  const pvtMsg = raw.match(/(?:t\.me|telegram\.me)\/c\/(\d+)\//);
-  if (pvtMsg) {
-    return await tg.client.getEntity(bigInt("-100" + pvtMsg[1]));
-  }
-
   const uname = raw.match(/(?:t\.me|telegram\.me)\/([A-Za-z]\w{3,})\/?$/)?.[1];
-  try {
-    const entity = await tg.client.getEntity(uname ? `@${uname}` : raw);
-    return entity;
-  } catch (e) {
-    if (e.message && e.message.includes("Could not find the input entity")) {
-      throw err("Telegram doesn't recognize this channel. If you just added the bot, please forward any message from the channel to the bot so it can register it, then try again.");
-    }
-    throw e;
-  }
+  return setChannel(uname ? `@${uname}` : raw);
 }
 
+/** Channels & groups this account has accessed (user session only). */
 export async function listDialogs() {
   if (!tg.client) throw err(tg.error || "Telegram offline", 503);
   if (tg.mode === "bot")
     throw err("browsing your chats needs a user session (npm run login) — bots can't list dialogs");
   const dialogs = await tg.client.getDialogs({ limit: 200 });
   return dialogs
-    .filter((d) => d.entity?.className === "Channel")
-    .map((d) => ({
-      id: `-100${d.entity.id.toString()}`,
-      title: d.entity.title,
-      username: d.entity.username || null,
-      group: !!d.entity.megagroup,
-    }));
+    .filter((d) => d.entity?.className === "Channel" || d.entity?.className === "Chat")
+    .map((d) => {
+      const isChannel = d.entity.className === "Channel";
+      const id = isChannel ? `-100${d.entity.id.toString()}` : `-${d.entity.id.toString()}`;
+      return {
+        id,
+        title: d.entity.title || "Untitled Chat",
+        username: d.entity.username || null,
+        group: isChannel ? !!d.entity.megagroup : true,
+        current: !!tg.channel && d.entity.id.toString() === tg.channel.id.toString(),
+      };
+    });
 }
 
-export async function handleChannelPost(ev) {
+/** Resolve a string, bigInt, or entity into a Telegram Entity */
+export async function resolvePeer(refOrEntity) {
+  if (!tg.client) throw err("Telegram offline", 503);
+  if (!refOrEntity) return tg.channel;
+  if (typeof refOrEntity === "object" && refOrEntity.className) return refOrEntity;
+
+  const r = String(refOrEntity).trim();
+  if (tg.channel) {
+    const chanIdStr = tg.channel.id.toString();
+    const cleanR = r.replace(/^-100/, "").replace(/^-/, "");
+    if (cleanR === chanIdStr || r === tg.channel.username || (r.startsWith("@") && r.slice(1) === tg.channel.username)) {
+      return tg.channel;
+    }
+  }
+
+  let targetId = r;
+  if (!targetId.startsWith("@") && !targetId.startsWith("-") && /^\d{10,}$/.test(targetId)) {
+    targetId = `-100${targetId}`;
+  } else if (!targetId.startsWith("@") && !targetId.startsWith("-") && /^\d+$/.test(targetId)) {
+    targetId = `-${targetId}`;
+  }
+
+  try {
+    return await tg.client.getEntity(/^-?\d+$/.test(targetId) ? bigInt(targetId) : targetId.startsWith("@") ? targetId : `@${targetId}`);
+  } catch (err1) {
+    try {
+      const dialogs = await tg.client.getDialogs({ limit: 150 });
+      const cleanT = targetId.replace(/^-100/, "").replace(/^-/, "");
+      const found = dialogs.find((d) => {
+        if (!d.entity) return false;
+        const eid = d.entity.id?.toString();
+        const uname = d.entity.username?.toLowerCase();
+        const matchUname = targetId.startsWith("@") ? targetId.slice(1).toLowerCase() : targetId.toLowerCase();
+        return eid === cleanT || (uname && uname === matchUname);
+      });
+      if (found?.entity) return found.entity;
+    } catch (_) {}
+    throw err1;
+  }
+}
+
+/**
+ * Scan past history of a channel / group and index all documents & photos into the virtual drive.
+ */
+export async function syncChannelHistory({ peerRef, ownerId, limit = 1000 } = {}) {
+  if (!tg.client) throw err("Telegram offline", 503);
+  const entity = await resolvePeer(peerRef);
+  if (!entity) throw err("No channel or group connected", 400);
+
+  const existingMsgIds = getIndexedMessageIds(ownerId);
+  const inbox = ensureInboxFolder(ownerId);
+
+  let scanned = 0;
+  let imported = 0;
+  let skipped = 0;
+
+  for await (const m of tg.client.iterMessages(entity, { limit })) {
+    scanned++;
+    if (!m) continue;
+
+    // Skip TeleMoon multipart uploads
+    if ((m.message || "").startsWith("tm1;")) {
+      skipped++;
+      continue;
+    }
+
+    const doc = m.media?.document;
+    const photo = m.media?.photo;
+    if (!doc && !photo) continue;
+
+    // Skip stickers
+    if (doc?.attributes?.some((a) => a.className === "DocumentAttributeSticker")) {
+      continue;
+    }
+
+    // Already indexed in our database
+    if (existingMsgIds.has(m.id)) {
+      skipped++;
+      continue;
+    }
+
+    let name;
+    let size = 0;
+    let mime = null;
+
+    if (doc) {
+      const fnAttr = doc.attributes?.find(
+        (a) => a.className === "DocumentAttributeFilename"
+      );
+      name = fnAttr?.fileName;
+      if (!name) {
+        const audioAttr = doc.attributes?.find(
+          (a) => a.className === "DocumentAttributeAudio"
+        );
+        if (audioAttr?.title) {
+          name = `${audioAttr.performer ? audioAttr.performer + " - " : ""}${audioAttr.title}`;
+          const ext = doc.mimeType?.includes("ogg") ? ".ogg" : doc.mimeType?.includes("mp3") ? ".mp3" : ".m4a";
+          if (!name.endsWith(ext)) name += ext;
+        } else if (doc.attributes?.some((a) => a.className === "DocumentAttributeVideo")) {
+          name = `video_${m.id}.mp4`;
+        } else {
+          const ext = doc.mimeType ? `.${doc.mimeType.split("/")[1] || "bin"}` : "";
+          name = `telegram_${m.id}${ext}`;
+        }
+      }
+      size = Number(doc.size?.toString?.() ?? doc.size);
+      mime = doc.mimeType || null;
+    } else if (photo) {
+      const sizes = photo.sizes || [];
+      const large = sizes[sizes.length - 1];
+      size = Number(large?.size || (large?.w && large?.h ? Math.round(large.w * large.h * 0.3) : 100000));
+      mime = "image/jpeg";
+      const caption = (m.message || "").trim().slice(0, 40).replace(/[/\\]/g, "-");
+      name = caption ? `${caption}_${m.id}.jpg` : `photo_${m.id}.jpg`;
+    }
+
+    name = String(name || `telegram_${m.id}`).replace(/[/\\]/g, "-").trim() || `telegram_${m.id}`;
+    if (!size || isNaN(size)) continue;
+
+    createFileNode({
+      parentId: inbox.id,
+      name,
+      size,
+      mime,
+      ownerId: ownerId || null,
+      parts: [{ msg_id: m.id, size }],
+    });
+
+    existingMsgIds.add(m.id);
+    imported++;
+  }
+
+  return { scanned, imported, skipped, folderId: inbox.id, folderName: inbox.name };
+}
+
+function onChannelPost(ev) {
   try {
     const m = ev.message;
     const cid = m?.peerId?.channelId;
     if (!cid) return;
-    const channelId = telegramChannelId(cid);
-
-    const storage = getStorageByChannel(channelId);
-    if (!storage) return;
+    if (!tg.channel) {
+      console.log(`[setup] channel id: -100${cid}`); // aid for bot-mode linking
+      return;
+    }
+    if (cid.toString() !== tg.channel.id.toString()) return;
     const doc = m.media?.document;
     if (!doc) return; // photos/stickers ignored — send as "File" to index
     if ((m.message || "").startsWith("tm1;")) return; // our own upload part
+    if (doc.attributes?.some((a) => a.className === "DocumentAttributeSticker")) return;
 
     const fnAttr = doc.attributes?.find(
       (a) => a.className === "DocumentAttributeFilename"
     );
-    const name = String(fnAttr?.fileName || `telegram_${m.id}`)
-      .trim()
-      .replace(/[/\\\0]/g, "-")
-      .slice(0, 255) || `telegram_${m.id}`;
+    const name = fnAttr?.fileName || `telegram_${m.id}`;
     const size = Number(doc.size?.toString?.() ?? doc.size);
-    const inbox = ensureInboxFolder(storage.user_id, storage.id);
+    const inbox = ensureInboxFolder();
     const node = createFileNode({
       parentId: inbox.id,
       name,
       size,
       mime: doc.mimeType || null,
-      ownerId: storage.user_id,
-      storageId: storage.id,
-      parts: [{ msg_id: m.id, size, storage_id: storage.id }],
+      parts: [{ msg_id: m.id, size }],
     });
     console.log(`[indexer] +${node.name} (${size} B) from channel post ${m.id}`);
   } catch (e) {
@@ -190,10 +310,15 @@ export async function handleChannelPost(ev) {
   }
 }
 
+function assertReady() {
+  if (!tg.ready) throw err(tg.error || "Telegram storage not connected", 503);
+}
+
 /** Upload a file from disk into the channel. Returns the message id. */
-export async function sendDocument(storageId, filePath, fileName, caption) {
-  const channel = await channelForStorage(storageId);
-  const msg = await tg.client.sendFile(channel, {
+export async function sendDocument(filePath, fileName, caption, peer = tg.channel) {
+  assertReady();
+  const target = peer ? await resolvePeer(peer) : tg.channel;
+  const msg = await tg.client.sendFile(target, {
     file: filePath,
     caption,
     forceDocument: true,
@@ -202,63 +327,25 @@ export async function sendDocument(storageId, filePath, fileName, caption) {
   return msg.id;
 }
 
-export async function getMessage(storageId, msgId) {
-  const channel = await channelForStorage(storageId);
-  const [m] = await tg.client.getMessages(channel, { ids: [msgId] });
+export async function getMessage(msgId, peer = tg.channel) {
+  assertReady();
+  const target = peer ? await resolvePeer(peer) : tg.channel;
+  const [m] = await tg.client.getMessages(target, { ids: [msgId] });
   if (!m || !m.media) throw err(`message ${msgId} missing in channel (deleted?)`, 502);
   return m;
 }
 
-export async function deleteMessages(messages) {
-  if (!messages.length) return;
-  const insert = q(
-    `INSERT OR IGNORE INTO deletion_queue(storage_id,msg_id,created_at) VALUES (?,?,?)`
-  );
-  for (const message of messages) {
-    if (message?.storage_id && message?.msg_id)
-      insert.run(message.storage_id, message.msg_id, now());
-  }
-  return drainDeletionQueue();
-}
-
-let isDraining = false;
-
-/** Retry-safe removal: queued rows survive restarts and Telegram outages. */
-export async function drainDeletionQueue() {
-  if (!tg.ready || !tg.client || isDraining) return;
-  isDraining = true;
-  try {
-    // Drop messages that permanently failed after 10 retries
-    q(`DELETE FROM deletion_queue WHERE attempts >= 10`).run();
-
-    const grouped = new Map();
-    for (const message of q(`SELECT storage_id,msg_id FROM deletion_queue WHERE attempts < 10 ORDER BY created_at`).all()) {
-      if (!grouped.has(message.storage_id)) grouped.set(message.storage_id, []);
-      grouped.get(message.storage_id).push(message.msg_id);
-    }
-    for (const [storageId, ids] of grouped) {
-      const channel = await channelForStorage(storageId).catch((error) => {
-        console.warn("[tg] deleteMessages storage:", error.message);
-        return null;
+export async function deleteMessages(ids, peer = tg.channel) {
+  if (!tg.ready || !ids.length) return;
+  const target = peer ? await resolvePeer(peer) : tg.channel;
+  for (let i = 0; i < ids.length; i += 100) {
+    try {
+      await tg.client.deleteMessages(target, ids.slice(i, i + 100), {
+        revoke: true,
       });
-      if (!channel) continue;
-      for (let i = 0; i < ids.length; i += 100) {
-        const batch = ids.slice(i, i + 100);
-        const placeholders = batch.map(() => "?").join(",");
-        try {
-          await tg.client.deleteMessages(channel, batch, { revoke: true });
-          q(`DELETE FROM deletion_queue WHERE storage_id=? AND msg_id IN (${placeholders})`)
-            .run(storageId, ...batch);
-        } catch (e) {
-          console.warn("[tg] deleteMessages:", e.message);
-          q(`UPDATE deletion_queue SET attempts=attempts+1,last_error=?
-             WHERE storage_id=? AND msg_id IN (${placeholders})`)
-            .run(String(e.message || e).slice(0, 500), storageId, ...batch);
-        }
-      }
+    } catch (e) {
+      console.warn("[tg] deleteMessages:", e.message);
     }
-  } finally {
-    isDraining = false;
   }
 }
 
@@ -268,8 +355,8 @@ export async function drainDeletionQueue() {
  * over-fetch to the previous 4 KB boundary and trim.
  * `write(buf) -> Promise<boolean>` returns false to abort (client gone).
  */
-export async function streamRange(storageId, msgId, from, to, write) {
-  const m = await getMessage(storageId, msgId);
+export async function streamRange(msgId, from, to, write, peer = tg.channel) {
+  const m = await getMessage(msgId, peer);
   const aligned = from - (from % 4096);
   let skip = from - aligned;
   let remaining = to - from + 1;
@@ -290,92 +377,4 @@ export async function streamRange(storageId, msgId, from, to, write) {
     const keepGoing = await write(buf);
     if (!keepGoing || remaining <= 0) break; // breaking closes the iterator
   }
-}
-
-/**
- * Scans channel history for unindexed documents and verifies integrity of existing chunks.
- */
-export async function scanAndRepairChannel(userId) {
-  if (!tg.ready || !tg.client) throw err(tg.error || "Telegram offline", 503);
-  const storage = getActiveStorage(userId);
-  if (!storage) throw err("No active Telegram storage connected for this account", 400);
-
-  const channel = await channelForStorage(storage.id);
-
-  // 1. Audit user's mapped chunks
-  const userChunks = q(
-    `SELECT c.file_id, c.idx, c.msg_id, c.storage_id, n.name
-     FROM chunks c JOIN nodes n ON c.file_id = n.id
-     WHERE n.owner_id = ? AND c.storage_id = ? AND n.deleted_at IS NULL`
-  ).all(userId, storage.id);
-
-  const missingChunks = [];
-  for (let i = 0; i < userChunks.length; i += 100) {
-    const batch = userChunks.slice(i, i + 100);
-    try {
-      const msgs = await tg.client.getMessages(channel, { ids: batch.map((c) => c.msg_id) });
-      batch.forEach((c, idx) => {
-        const m = msgs[idx];
-        if (!m || !m.media) {
-          missingChunks.push({
-            fileId: c.file_id,
-            fileName: c.name,
-            partIndex: c.idx,
-            msgId: c.msg_id,
-          });
-        }
-      });
-    } catch (auditErr) {
-      console.warn("[scan/repair audit]", auditErr.message);
-    }
-  }
-
-  // 2. Discover unindexed documents posted directly in the channel
-  const existingMsgIds = new Set(
-    q(`SELECT msg_id FROM chunks WHERE storage_id = ?`).all(storage.id).map((r) => r.msg_id)
-  );
-
-  const newlyIndexedFiles = [];
-  try {
-    for await (const m of tg.client.iterMessages(channel, { limit: 500 })) {
-      if (!m || !m.id) continue;
-      if (existingMsgIds.has(m.id)) continue;
-      if ((m.message || "").startsWith("tm1;")) continue; // TeleMoon upload part
-      const doc = m.media?.document;
-      if (!doc) continue;
-
-      const fnAttr = doc.attributes?.find((a) => a.className === "DocumentAttributeFilename");
-      const name = String(fnAttr?.fileName || `telegram_${m.id}`)
-        .trim()
-        .replace(/[/\\\0]/g, "-")
-        .slice(0, 255) || `telegram_${m.id}`;
-      const size = Number(doc.size?.toString?.() ?? doc.size);
-      const inbox = ensureInboxFolder(userId, storage.id);
-      const node = createFileNode({
-        parentId: inbox.id,
-        name,
-        size,
-        mime: doc.mimeType || null,
-        ownerId: userId,
-        storageId: storage.id,
-        parts: [{ msg_id: m.id, size, storage_id: storage.id }],
-      });
-      existingMsgIds.add(m.id);
-      newlyIndexedFiles.push({
-        id: node.id,
-        name: node.name,
-        size: node.size,
-        msgId: m.id,
-      });
-    }
-  } catch (scanErr) {
-    console.warn("[scan/repair history]", scanErr.message);
-  }
-
-  return {
-    channelTitle: storage.channel_title || "Telegram Channel",
-    totalChunksChecked: userChunks.length,
-    missingChunks,
-    newlyIndexedFiles,
-  };
 }

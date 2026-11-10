@@ -1,51 +1,48 @@
-const S = ({ children, strokeWidth = 2, ...p }) => (
+const S = ({ children, ...p }) => (
   <svg viewBox="0 0 24 24" width="18" height="18" fill="none"
-    stroke="currentColor" strokeWidth={strokeWidth} strokeLinecap="square"
-    strokeLinejoin="miter" aria-hidden="true" {...p}>{children}</svg>
+    stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"
+    strokeLinejoin="round" aria-hidden="true" {...p}>{children}</svg>
 );
 
-export const Crescent = ({ size = 22, ...p }) => (
-  <svg viewBox="0 0 32 32" width={size} height={size} aria-hidden="true" {...p}>
-    <defs>
-      <linearGradient id="chBrandGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" stopColor="#DDDDDD" />
-        <stop offset="100%" stopColor="#7EA3CC" />
-      </linearGradient>
-    </defs>
-    <path d="M22 4a12 12 0 1 0 6 22A14 14 0 0 1 22 4z" fill="url(#chBrandGrad)" />
+export const Crescent = (p) => (
+  <svg viewBox="0 0 32 32" width="26" height="26" aria-hidden="true" {...p}>
+    <path d="M22 4a12 12 0 1 0 6 22A14 14 0 0 1 22 4z" fill="var(--moon)" />
   </svg>
 );
 
-/** Utilitarian rectangular progress gauge in steel blue. */
+/** The signature: an upload's progress rendered as a waxing moon. */
 export function MoonProgress({ pct = 0, size = 26 }) {
-  const progress = Math.min(Math.max(pct, 0), 100);
+  const r = 10, c = 12;
+  const x = c - r + (2 * r * Math.min(Math.max(pct, 0), 100)) / 100; // terminator sweeps left→right
   return (
-    <svg viewBox="0 0 24 12" width={size} height={12} role="progressbar"
-      aria-label="Upload progress" aria-valuemin="0" aria-valuemax="100"
-      aria-valuenow={Math.round(progress)} style={{ flexShrink: 0 }}>
-      <rect x="0.5" y="0.5" width="23" height="11" fill="var(--bg-deep)" stroke="var(--line-strong)" strokeWidth="1" />
-      <rect x="2" y="2" width={(20 * progress) / 100} height="8" fill="var(--ch-steel)" />
+    <svg viewBox="0 0 24 24" width={size} height={size} aria-label={`${Math.round(pct)}%`}>
+      <defs>
+        <clipPath id={`mp${size}`}><circle cx={c} cy={c} r={r} /></clipPath>
+      </defs>
+      <circle cx={c} cy={c} r={r} fill="none" stroke="var(--line-strong)" strokeWidth="1.4" />
+      <rect x={c - r} y={c - r} width={Math.max(x - (c - r), 0)} height={2 * r}
+        fill="var(--moon)" clipPath={`url(#mp${size})`} />
     </svg>
   );
 }
 
 export const FolderIcon = (p) => (
-  <S {...p}><path d="M3 7h6l2 2h10v10H3z" /><path d="M3 7v12" /></S>
+  <S {...p}><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" /></S>
 );
 export const FileIcon = (p) => (
-  <S {...p}><path d="M14 3H5v18h14V8z" /><path d="M14 3v5h5" /></S>
+  <S {...p}><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5" /></S>
 );
 export const ImgIcon = (p) => (
-  <S {...p}><rect x="3" y="5" width="18" height="14" /><circle cx="8.5" cy="10" r="1.5" /><path d="m21 17-5-5-4 4-2-2-5 5" /></S>
+  <S {...p}><rect x="3" y="5" width="18" height="14" rx="2" /><circle cx="8.5" cy="10" r="1.5" /><path d="m21 17-5-5-4 4-2-2-5 5" /></S>
 );
 export const VidIcon = (p) => (
-  <S {...p}><rect x="3" y="5" width="18" height="14" /><path d="m10 9 5 3-5 3z" /></S>
+  <S {...p}><rect x="3" y="5" width="18" height="14" rx="2" /><path d="m10 9 5 3-5 3z" /></S>
 );
 export const MusicIcon = (p) => (
   <S {...p}><path d="M9 18V6l10-2v12" /><circle cx="6.5" cy="18" r="2.5" /><circle cx="16.5" cy="16" r="2.5" /></S>
 );
 export const ZipIcon = (p) => (
-  <S {...p}><rect x="4" y="3" width="16" height="18" /><path d="M12 3v2m0 2v2m0 2v2" /></S>
+  <S {...p}><rect x="4" y="3" width="16" height="18" rx="2" /><path d="M12 3v2m0 2v2m0 2v2" /></S>
 );
 export const CodeIcon = (p) => (
   <S {...p}><path d="m8 8-4 4 4 4M16 8l4 4-4 4" /></S>
@@ -62,12 +59,6 @@ export const DownloadIcon = (p) => (
 );
 export const TrashIcon = (p) => (
   <S {...p}><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2m3 0-.8 12a2 2 0 0 1-2 1.9H8.8a2 2 0 0 1-2-1.9L6 7" /></S>
-);
-export const RestoreIcon = (p) => (
-  <S {...p}><path d="M4 7v5h5" /><path d="M5.5 12a7 7 0 1 0 2-5" /></S>
-);
-export const MoveIcon = (p) => (
-  <S {...p}><path d="M5 7h9" /><path d="m11 4 3 3-3 3" /><path d="M19 17h-9" /><path d="m13 14-3 3 3 3" /></S>
 );
 export const EditIcon = (p) => (
   <S {...p}><path d="M4 20h4L19 9a2.1 2.1 0 0 0-3-3L5 17z" /><path d="m13.5 6.5 3 3" /></S>
@@ -87,24 +78,57 @@ export const UsersIcon = (p) => (
   <S {...p}><circle cx="9" cy="8" r="3.5" /><path d="M2.5 20a6.5 6.5 0 0 1 13 0" /><path d="M16 5a3.5 3.5 0 0 1 0 6.6M15.5 14a6.5 6.5 0 0 1 6 6" /></S>
 );
 export const MegaphoneIcon = (p) => (
-  <S {...p}><path d="M11 4a2 2 0 0 1 2 2v1a2 2 0 0 1-2 2h-4l-3 4V4h7z"/><path d="M13 5v4l5 2V3l-5 2z"/></S>
+  <S {...p}><path d="M3 11v2a1 1 0 0 0 1 1h2l4 4V7L6 10H4a1 1 0 0 0-1 1z" /><path d="M14 8a4 4 0 0 1 0 8M17 5a8 8 0 0 1 0 14" /></S>
 );
-export const LockIcon = (p) => (
-  <S {...p}><rect x="3" y="11" width="18" height="11" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></S>
+export const SyncIcon = (p) => (
+  <S {...p}><path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2" /></S>
 );
-export const ShieldIcon = (p) => (
-  <S {...p}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></S>
+export const MoveIcon = (p) => (
+  <S {...p}><path d="M5 9l-3 3 3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3M2 12h20M12 2v20" /></S>
 );
-export const TelegramIcon = (p) => (
-  <S {...p}><path d="m22 2-7 20-4-9-9-4Z" /><path d="M22 2 11 13" /></S>
-);
-export const CopyIcon = (p) => (
-  <S {...p}><rect x="9" y="9" width="13" height="13" /><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" /></S>
-);
-export const CheckIcon = (p) => (
-  <S {...p}><polyline points="20 6 9 17 4 12" /></S>
+export const LayersIcon = (p) => (
+  <S {...p}><polygon points="12 2 2 7 12 12 22 7 12 2" /><polyline points="2 17 12 22 22 17" /><polyline points="2 12 12 17 22 12" /></S>
 );
 
+export const SunIcon = (p) => (
+  <S {...p}>
+    <circle cx="12" cy="12" r="5" />
+    <line x1="12" y1="1" x2="12" y2="3" />
+    <line x1="12" y1="21" x2="12" y2="23" />
+    <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+    <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+    <line x1="1" y1="12" x2="3" y2="12" />
+    <line x1="21" y1="12" x2="23" y2="12" />
+    <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+    <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+  </S>
+);
+
+export const MoonIcon = (p) => (
+  <S {...p}>
+    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+  </S>
+);
+
+export const LockIcon = (p) => (
+  <S {...p}>
+    <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+    <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+  </S>
+);
+
+export const SendIcon = (p) => (
+  <S {...p}>
+    <line x1="22" y1="2" x2="11" y2="13" />
+    <polygon points="22 2 15 22 11 13 2 9 22 2" />
+  </S>
+);
+
+export const CheckIcon = (p) => (
+  <S {...p}>
+    <polyline points="20 6 9 17 4 12" />
+  </S>
+);
 
 export function iconFor(node) {
   if (node.type === "folder") return FolderIcon;

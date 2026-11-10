@@ -9,8 +9,8 @@
     "dev:server": "npm -w server run dev",
     "dev:web": "npm -w web run dev",
     "build": "npm -w web run build",
-    "test": "npm -w server test",
     "start": "npm -w server run start",
-    "login": "npm -w server run login"
+    "login": "npm -w server run login",
+    "test": "node server/test/sync.test.js"
   }
 }

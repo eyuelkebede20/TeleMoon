@@ -1,276 +1,122 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { api, token, savedUser } from "./api.js";
-import { Crescent, TelegramIcon } from "./icons.jsx";
-import AuthCanvas from "./AuthCanvas.jsx";
+import { useTheme } from "./theme.js";
+import { Crescent, SunIcon, MoonIcon } from "./icons.jsx";
 
-export default function Auth({ onAuth }) {
-  const [mode, setMode] = useState("signin"); // "signin" | "signup"
+// One door, no signup: type an @handle and a password. A new handle simply
+// becomes yours.
+export default function Auth({ onAuth, onOpenDrop }) {
+  const { theme, toggleTheme } = useTheme();
+  const [st, setSt] = useState(null);
   const [handle, setHandle] = useState("");
   const [password, setPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-  const [invite, setInvite] = useState("");
-  const [st, setSt] = useState(null);
+  const [telegramId, setTelegramId] = useState("");
+  const [dropInput, setDropInput] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
-  const handleRef = useRef(null);
 
-  const botHandle = st?.botUsername ? `@${st.botUsername.replace(/^@/, "")}` : "@Telemoon2bot";
-  const botUrl = `https://t.me/${botHandle.replace(/^@/, "")}`;
-
-  useEffect(() => {
-    api.publicStatus().then(setSt).catch(() => {});
-  }, []);
-
-  useEffect(() => {
-    if (window.matchMedia("(min-width: 721px) and (pointer: fine)").matches) {
-      handleRef.current?.focus({ preventScroll: true });
-    }
-  }, [mode]);
-
-  const needInvite = mode === "signup" && !!st && st.users > 0 && st.inviteRequired;
+  useEffect(() => { api.status().then(setSt).catch(() => {}); }, []);
 
   async function submit(e) {
     e.preventDefault();
-    setErr("");
-
-    if (mode === "signup" && password !== confirmPassword) {
-      setErr("Passwords do not match.");
-      return;
-    }
-
-    setBusy(true);
+    setErr(""); setBusy(true);
     try {
-      const res = await api.enter({
-        handle,
-        password,
-        invite: mode === "signup" ? invite : undefined,
-      });
-      token.clear();
+      const res = await api.enter({ handle, password, telegramId });
+      token.set(res.token);
       savedUser.set(res.user);
       onAuth(res.user);
-    } catch (ex) {
-      setErr(ex.message);
-    } finally {
-      setBusy(false);
-    }
+    } catch (ex) { setErr(ex.message); }
+    finally { setBusy(false); }
   }
 
   return (
-    <div className="split-landing">
-      {/* Background Liquid & Flying Telegram Canvas */}
-      <AuthCanvas />
+    <div className="auth-wrap">
+      <div className="auth-top">
+        <button
+          type="button"
+          className="theme-toggle"
+          onClick={toggleTheme}
+          title={theme === "light" ? "Switch to Blue-Black Dark Mode" : "Switch to Creamy Light Mode"}
+          aria-label="Toggle theme"
+        >
+          {theme === "light" ? <MoonIcon /> : <SunIcon />}
+          <span>{theme === "light" ? "Dark" : "Light"}</span>
+        </button>
+      </div>
+      <form className="auth-card" onSubmit={submit}>
+        <div className="auth-logo"><Crescent /><h1>TeleMoon</h1></div>
+        <p className="auth-sub">Your Telegram channel, as a drive.</p>
 
-      {/* Left side: Editorial / Written content */}
-      <section className="landing-left">
-        <div className="landing-top-bar">
-          <div className="landing-brand">
-            <Crescent size={28} />
-            <span>TeleMoon</span>
+        <label>Handle
+          <div className="at-field">
+            <span aria-hidden="true">@</span>
+            <input value={handle} placeholder="moonfriend"
+              onChange={(e) => setHandle(e.target.value.replace(/^@/, ""))}
+              required autoFocus autoComplete="username"
+              spellCheck={false} autoCapitalize="none" />
           </div>
-          <a
-            href={botUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="bot-badge"
-            title={`Open ${botHandle} on Telegram`}
-          >
-            <TelegramIcon size={14} />
-            <span>{botHandle}</span>
-          </a>
-        </div>
-
-        <div className="left-content">
-          <span className="section-label">TELEGRAM STORAGE VFS</span>
-          <h1>Your Telegram channel as a <em>private drive.</em></h1>
-          <p className="left-desc">
-            Upload files from your browser. TeleMoon splits large files and stores the chunks in your private Telegram channel. Browse, stream, and download your files whenever you need them.
-          </p>
-
-          <div className="left-features">
-            <div className="feature-row">
-              <span className="feature-num">01</span>
-              <div className="feature-info">
-                <h3>Private Channel Storage</h3>
-                <p>
-                  Telegram stores your files. Create a private channel and add{" "}
-                  <a
-                    href={botUrl}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="accent-link"
-                  >
-                    <b>{botHandle}</b>
-                  </a>{" "}
-                  as admin to start storing. You keep full ownership.
-                </p>
-              </div>
-            </div>
-
-            <div className="feature-row">
-              <span className="feature-num">02</span>
-              <div className="feature-info">
-                <h3>Password Encryption</h3>
-                <p>Encrypt files in your browser before uploading them to Telegram.</p>
-              </div>
-            </div>
-
-            <div className="feature-row">
-              <span className="feature-num">03</span>
-              <div className="feature-info">
-                <h3>Drive System</h3>
-                <p>Folders, video streaming with range requests, search, and download links.</p>
-              </div>
-            </div>
+        </label>
+        <label>Telegram Username <span className="dim">(for new accounts, recovery)</span>
+          <div className="at-field">
+            <span aria-hidden="true">@</span>
+            <input value={telegramId} placeholder="telegram_user"
+              onChange={(e) => setTelegramId(e.target.value.replace(/^@/, ""))}
+              spellCheck={false} autoCapitalize="none" />
           </div>
-        </div>
+        </label>
+        <label>Password
+          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)}
+            required minLength={6} autoComplete="current-password" />
+        </label>
 
-        <footer className="left-foot">
-          <span>TeleMoon</span>
-          <a
-            href={botUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="bot-foot-link"
-            title={`Open ${botHandle} on Telegram`}
-          >
-            <TelegramIcon size={13} />
-            <span>Telegram Bot: {botHandle}</span>
-          </a>
-          <span>Telegram Virtual File System</span>
-        </footer>
-      </section>
+        {err && <p className="auth-err" role="alert">{err}</p>}
+        <button className="btn btn-moon" disabled={busy}>
+          {busy ? "One moment…" : "Enter"}
+        </button>
+        <p className="auth-hint">New handle? It becomes yours the first time you enter.</p>
 
-      {/* Right side: Auth Box with Sign In / Sign Up tabs */}
-      <section className="landing-right">
-        <div className="auth-box">
-          <div className="auth-tabs" role="tablist" aria-label="Account options">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={mode === "signin"}
-              className={`auth-tab ${mode === "signin" ? "active" : ""}`}
-              onClick={() => { setMode("signin"); setErr(""); }}
-            >
-              Sign In
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={mode === "signup"}
-              className={`auth-tab ${mode === "signup" ? "active" : ""}`}
-              onClick={() => { setMode("signup"); setErr(""); }}
-            >
-              Sign Up
-            </button>
-          </div>
-
-          <form className="auth-body" onSubmit={submit}>
-            <div>
-              <h2>{mode === "signin" ? "Sign In" : "Create Account"}</h2>
-              <p className="auth-sub">
-                {mode === "signin"
-                  ? "Enter your handle and password to access your drive."
-                  : "Choose a handle and password for your storage."}
-              </p>
-            </div>
-
-            <div className="form-fields">
-              <label className="field-group">
-                <span className="field-label">Handle</span>
-                <div className="at-field">
-                  <span aria-hidden="true">@</span>
-                  <input
-                    ref={handleRef}
-                    value={handle}
-                    placeholder="username"
-                    onChange={(e) => setHandle(e.target.value.replace(/^@/, ""))}
-                    required
-                    autoComplete="username"
-                    spellCheck={false}
-                    autoCapitalize="none"
-                  />
-                </div>
-              </label>
-
-              <label className="field-group">
-                <span className="field-label">Password</span>
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="At least 6 characters"
-                  required
-                  minLength={6}
-                  autoComplete={mode === "signin" ? "current-password" : "new-password"}
-                />
-              </label>
-
-              {mode === "signup" && (
-                <label className="field-group">
-                  <span className="field-label">Confirm Password</span>
-                  <input
-                    type="password"
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                    placeholder="Repeat your password"
-                    required
-                    minLength={6}
-                    autoComplete="new-password"
-                  />
-                </label>
-              )}
-
-              {needInvite && (
-                <label className="field-group">
-                  <span className="field-label">Invite Code</span>
-                  <input
-                    value={invite}
-                    onChange={(e) => setInvite(e.target.value)}
-                    placeholder="Required for registration"
-                    required
-                  />
-                </label>
-              )}
-
-              {err && <div className="auth-err" role="alert">{err}</div>}
-
-              <button className="btn btn-moon auth-submit" disabled={busy}>
-                {busy
-                  ? "Working..."
-                  : mode === "signin"
-                    ? "Sign In"
-                    : "Create Account"}
+        {onOpenDrop && (
+          <div style={{ marginTop: 18, paddingTop: 18, borderTop: "1px solid var(--line)", textAlign: "center" }}>
+            <p style={{ margin: "0 0 10px", fontSize: "0.85rem", color: "var(--muted)" }}>
+              Have an upload code or link to send files?
+            </p>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input
+                type="text"
+                value={dropInput}
+                onChange={(e) => setDropInput(e.target.value)}
+                placeholder="Code or link (e.g. 4829 or qq)"
+                style={{
+                  flex: 1,
+                  padding: "8px 12px",
+                  borderRadius: "10px",
+                  border: "1px solid var(--line)",
+                  background: "var(--ink-2)",
+                  color: "var(--text)",
+                  fontFamily: "var(--mono)",
+                  fontSize: "0.85rem",
+                  textAlign: "center"
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    e.preventDefault();
+                    if (dropInput.trim()) onOpenDrop(dropInput.trim());
+                  }
+                }}
+              />
+              <button
+                type="button"
+                className="btn"
+                disabled={!dropInput.trim()}
+                onClick={() => onOpenDrop(dropInput.trim())}
+                style={{ padding: "8px 14px", fontSize: "0.85rem" }}
+              >
+                Open
               </button>
             </div>
-
-            <p className="auth-switch-note">
-              {mode === "signin" ? (
-                <>
-                  Need an account?
-                  <button
-                    type="button"
-                    className="switch-btn"
-                    onClick={() => { setMode("signup"); setErr(""); }}
-                  >
-                    Sign up
-                  </button>
-                </>
-              ) : (
-                <>
-                  Already registered?
-                  <button
-                    type="button"
-                    className="switch-btn"
-                    onClick={() => { setMode("signin"); setErr(""); }}
-                  >
-                    Sign in
-                  </button>
-                </>
-              )}
-            </p>
-          </form>
-        </div>
-      </section>
+          </div>
+        )}
+      </form>
     </div>
   );
 }
