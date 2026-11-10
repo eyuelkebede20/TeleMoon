@@ -23,4 +23,15 @@ export const cfg = {
 
   // Chunking. Telegram hard cap: 2 GB/message via bot MTProto, 4 GB via premium user session.
   chunkBytes: Math.min(num(process.env.CHUNK_MB, 1536), 1900) * MB,
+
+  // Keep-alive / Auto-ping (prevents cloud container idle sleep on Railway/Render)
+  pingUrl:
+    process.env.PING_URL ||
+    process.env.APP_URL ||
+    process.env.RENDER_EXTERNAL_URL ||
+    (process.env.RAILWAY_STATIC_URL ? `https://${process.env.RAILWAY_STATIC_URL}` : "") ||
+    (process.env.RAILWAY_PUBLIC_DOMAIN ? `https://${process.env.RAILWAY_PUBLIC_DOMAIN}` : "") ||
+    "",
+  pingIntervalMin: num(process.env.PING_INTERVAL_MIN, 10),
+  pingEnabled: process.env.PING_ENABLED !== "false",
 };

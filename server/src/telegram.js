@@ -75,17 +75,18 @@ export async function initTelegram() {
 export async function setChannel(refOrEntity) {
   if (!tg.client) throw err("Telegram offline", 503);
   let ent = refOrEntity;
-  if (typeof ent !== "object") {
-    const r = String(ent).trim();
-    ent = await tg.client.getEntity(/^-?\d+$/.test(r) ? bigInt(r) : r.startsWith("@") ? r : `@${r}`);
+  if (typeof ent !== "object" || !ent?.className) {
+    ent = await resolvePeer(ent);
   }
-  if (ent.className !== "Channel")
-    throw err("TeleMoon needs a channel or supergroup — plain group chats and users aren't supported");
+  if (ent.className !== "Channel" && ent.className !== "Chat")
+    throw err("TeleMoon needs a channel or group — private user chats aren't supported");
   tg.channel = ent;
   tg.ready = true;
   tg.error = null;
-  setSetting("channel", `-100${ent.id.toString()}`);
-  return { id: `-100${ent.id.toString()}`, title: ent.title };
+  const isChannel = ent.className === "Channel";
+  const formattedId = isChannel ? `-100${ent.id.toString()}` : `-${ent.id.toString()}`;
+  setSetting("channel", formattedId);
+  return { id: formattedId, title: ent.title };
 }
 
 /** Accepts t.me/+HASH invite links, t.me/name, @name, or a -100… id. */
@@ -119,21 +120,25 @@ export async function connectByLink(link) {
   return setChannel(uname ? `@${uname}` : raw);
 }
 
-/** Channels & supergroups this account has accessed (user session only). */
+/** Channels & groups this account has accessed (user session only). */
 export async function listDialogs() {
   if (!tg.client) throw err(tg.error || "Telegram offline", 503);
   if (tg.mode === "bot")
     throw err("browsing your chats needs a user session (npm run login) — bots can't list dialogs");
   const dialogs = await tg.client.getDialogs({ limit: 200 });
   return dialogs
-    .filter((d) => d.entity?.className === "Channel")
-    .map((d) => ({
-      id: `-100${d.entity.id.toString()}`,
-      title: d.entity.title,
-      username: d.entity.username || null,
-      group: !!d.entity.megagroup,
-      current: !!tg.channel && d.entity.id.toString() === tg.channel.id.toString(),
-    }));
+    .filter((d) => d.entity?.className === "Channel" || d.entity?.className === "Chat")
+    .map((d) => {
+      const isChannel = d.entity.className === "Channel";
+      const id = isChannel ? `-100${d.entity.id.toString()}` : `-${d.entity.id.toString()}`;
+      return {
+        id,
+        title: d.entity.title || "Untitled Chat",
+        username: d.entity.username || null,
+        group: isChannel ? !!d.entity.megagroup : true,
+        current: !!tg.channel && d.entity.id.toString() === tg.channel.id.toString(),
+      };
+    });
 }
 
 /** Resolve a string, bigInt, or entity into a Telegram Entity */
@@ -145,24 +150,43 @@ export async function resolvePeer(refOrEntity) {
   const r = String(refOrEntity).trim();
   if (tg.channel) {
     const chanIdStr = tg.channel.id.toString();
-    const cleanR = r.replace(/^-100/, "");
+    const cleanR = r.replace(/^-100/, "").replace(/^-/, "");
     if (cleanR === chanIdStr || r === tg.channel.username || (r.startsWith("@") && r.slice(1) === tg.channel.username)) {
       return tg.channel;
     }
   }
 
   let targetId = r;
-  if (!targetId.startsWith("@") && !targetId.startsWith("-100") && /^\d+$/.test(targetId)) {
+  if (!targetId.startsWith("@") && !targetId.startsWith("-") && /^\d{10,}$/.test(targetId)) {
     targetId = `-100${targetId}`;
+  } else if (!targetId.startsWith("@") && !targetId.startsWith("-") && /^\d+$/.test(targetId)) {
+    targetId = `-${targetId}`;
   }
-  return await tg.client.getEntity(/^-?\d+$/.test(targetId) ? bigInt(targetId) : targetId.startsWith("@") ? targetId : `@${targetId}`);
+
+  try {
+    return await tg.client.getEntity(/^-?\d+$/.test(targetId) ? bigInt(targetId) : targetId.startsWith("@") ? targetId : `@${targetId}`);
+  } catch (err1) {
+    try {
+      const dialogs = await tg.client.getDialogs({ limit: 150 });
+      const cleanT = targetId.replace(/^-100/, "").replace(/^-/, "");
+      const found = dialogs.find((d) => {
+        if (!d.entity) return false;
+        const eid = d.entity.id?.toString();
+        const uname = d.entity.username?.toLowerCase();
+        const matchUname = targetId.startsWith("@") ? targetId.slice(1).toLowerCase() : targetId.toLowerCase();
+        return eid === cleanT || (uname && uname === matchUname);
+      });
+      if (found?.entity) return found.entity;
+    } catch (_) {}
+    throw err1;
+  }
 }
 
 /**
- * Scan past history of a channel / supergroup and index all documents into the virtual drive.
+ * Scan past history of a channel / group and index all documents & photos into the virtual drive.
  */
 export async function syncChannelHistory({ peerRef, ownerId, limit = 1000 } = {}) {
-  assertReady();
+  if (!tg.client) throw err("Telegram offline", 503);
   const entity = await resolvePeer(peerRef);
   if (!entity) throw err("No channel or group connected", 400);
 
@@ -184,10 +208,11 @@ export async function syncChannelHistory({ peerRef, ownerId, limit = 1000 } = {}
     }
 
     const doc = m.media?.document;
-    if (!doc) continue;
+    const photo = m.media?.photo;
+    if (!doc && !photo) continue;
 
     // Skip stickers
-    if (doc.attributes?.some((a) => a.className === "DocumentAttributeSticker")) {
+    if (doc?.attributes?.some((a) => a.className === "DocumentAttributeSticker")) {
       continue;
     }
 
@@ -197,35 +222,49 @@ export async function syncChannelHistory({ peerRef, ownerId, limit = 1000 } = {}
       continue;
     }
 
-    const fnAttr = doc.attributes?.find(
-      (a) => a.className === "DocumentAttributeFilename"
-    );
-    let name = fnAttr?.fileName;
-    if (!name) {
-      const audioAttr = doc.attributes?.find(
-        (a) => a.className === "DocumentAttributeAudio"
+    let name;
+    let size = 0;
+    let mime = null;
+
+    if (doc) {
+      const fnAttr = doc.attributes?.find(
+        (a) => a.className === "DocumentAttributeFilename"
       );
-      if (audioAttr?.title) {
-        name = `${audioAttr.performer ? audioAttr.performer + " - " : ""}${audioAttr.title}`;
-        const ext = doc.mimeType?.includes("ogg") ? ".ogg" : doc.mimeType?.includes("mp3") ? ".mp3" : ".m4a";
-        if (!name.endsWith(ext)) name += ext;
-      } else if (doc.attributes?.some((a) => a.className === "DocumentAttributeVideo")) {
-        name = `video_${m.id}.mp4`;
-      } else {
-        const ext = doc.mimeType ? `.${doc.mimeType.split("/")[1] || "bin"}` : "";
-        name = `telegram_${m.id}${ext}`;
+      name = fnAttr?.fileName;
+      if (!name) {
+        const audioAttr = doc.attributes?.find(
+          (a) => a.className === "DocumentAttributeAudio"
+        );
+        if (audioAttr?.title) {
+          name = `${audioAttr.performer ? audioAttr.performer + " - " : ""}${audioAttr.title}`;
+          const ext = doc.mimeType?.includes("ogg") ? ".ogg" : doc.mimeType?.includes("mp3") ? ".mp3" : ".m4a";
+          if (!name.endsWith(ext)) name += ext;
+        } else if (doc.attributes?.some((a) => a.className === "DocumentAttributeVideo")) {
+          name = `video_${m.id}.mp4`;
+        } else {
+          const ext = doc.mimeType ? `.${doc.mimeType.split("/")[1] || "bin"}` : "";
+          name = `telegram_${m.id}${ext}`;
+        }
       }
+      size = Number(doc.size?.toString?.() ?? doc.size);
+      mime = doc.mimeType || null;
+    } else if (photo) {
+      const sizes = photo.sizes || [];
+      const large = sizes[sizes.length - 1];
+      size = Number(large?.size || (large?.w && large?.h ? Math.round(large.w * large.h * 0.3) : 100000));
+      mime = "image/jpeg";
+      const caption = (m.message || "").trim().slice(0, 40).replace(/[/\\]/g, "-");
+      name = caption ? `${caption}_${m.id}.jpg` : `photo_${m.id}.jpg`;
     }
 
-    name = name.replace(/[/\\]/g, "-").trim() || `telegram_${m.id}`;
-    const size = Number(doc.size?.toString?.() ?? doc.size);
+    name = String(name || `telegram_${m.id}`).replace(/[/\\]/g, "-").trim() || `telegram_${m.id}`;
     if (!size || isNaN(size)) continue;
 
     createFileNode({
       parentId: inbox.id,
       name,
       size,
-      mime: doc.mimeType || null,
+      mime,
       ownerId: ownerId || null,
       parts: [{ msg_id: m.id, size }],
     });

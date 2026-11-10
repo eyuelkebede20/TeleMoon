@@ -39,7 +39,7 @@ export const api = {
   completeUpload: (id) => j("POST", `/api/uploads/${id}/complete`),
   abortUpload: (id) => j("DELETE", `/api/uploads/${id}`),
   share: (id) => j("POST", `/api/nodes/${id}/share`),
-  syncTelegram: (limit) => j("POST", "/api/tg/sync", { limit }),
+  syncTelegram: (limit = 1000, channelId = null) => j("POST", "/api/tg/sync", { limit, channelId }),
   autoOrganize: (folderId) => j("POST", `/api/folders/${folderId}/auto-organize`),
   folderTree: () => j("GET", "/api/folders/tree"),
   batchMove: (ids, targetParentId) => j("POST", "/api/nodes/move", { ids, targetParentId }),
@@ -47,6 +47,10 @@ export const api = {
   createDropLink: (folderId, b) => j("POST", `/api/folders/${folderId}/drop-links`, b),
   updateDropLink: (id, b) => j("PATCH", `/api/drop-links/${id}`, b),
   deleteDropLink: (id) => j("DELETE", `/api/drop-links/${id}`),
+  ping: () => j("GET", "/api/ping"),
+  keepAlive: () => j("GET", "/api/keep-alive"),
+  triggerPing: () => j("POST", "/api/keep-alive", { action: "ping" }),
+  updateKeepAlive: (b) => j("POST", "/api/keep-alive", b),
   getDropInfo: async (code) => {
     const res = await fetch(`/api/drop/${encodeURIComponent(code)}`);
     const data = await res.json().catch(() => ({}));

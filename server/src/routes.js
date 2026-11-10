@@ -27,6 +27,9 @@ import { addSSEClient, emitSyncChange } from "./sync.js";
 import {
   tg, sendDocument, deleteMessages, streamRange, connectByLink, listDialogs, syncChannelHistory, resolvePeer,
 } from "./telegram.js";
+import {
+  getKeepAliveStatus, triggerPing, updateKeepAliveConfig,
+} from "./keepalive.js";
 
 export const api = Router();
 const bad = (res, code, error) => res.status(code).json({ error });
@@ -51,6 +54,29 @@ function getUserPeer(userId) {
 
 /* ---------------------------------------------------------------- status */
 
+api.get("/ping", (_req, res) => {
+  res.status(200).json({
+    status: "ok",
+    service: "TeleMoon",
+    time: Date.now(),
+    uptime: Math.floor(process.uptime()),
+  });
+});
+
+api.get("/keep-alive", (_req, res) => {
+  res.json({ keepAlive: getKeepAliveStatus() });
+});
+
+api.post("/keep-alive", auth, async (req, res) => {
+  const { action, url, enabled, intervalMin } = req.body || {};
+  if (action === "ping") {
+    const result = await triggerPing();
+    return res.json({ result, keepAlive: getKeepAliveStatus() });
+  }
+  const updated = updateKeepAliveConfig({ url, enabled, intervalMin });
+  res.json({ keepAlive: updated });
+});
+
 api.get("/status", (_req, res) => {
   res.json({
     telegram: tg.ready ? "connected" : "offline",
@@ -59,6 +85,7 @@ api.get("/status", (_req, res) => {
     error: tg.error,
     chunkBytes: cfg.chunkBytes,
     users: q(`SELECT COUNT(*) c FROM users`).get().c,
+    keepAlive: getKeepAliveStatus(),
   });
 });
 
@@ -134,14 +161,18 @@ api.post("/tg/connect", auth, async (req, res) => {
 
 api.post("/tg/sync", auth, async (req, res) => {
   try {
-    let peer;
-    try { peer = getUserPeer(req.user.id); } catch (e) {}
+    const channelRef = req.body?.channelId || req.body?.channel || req.body?.peerRef;
+    let peer = channelRef;
+    if (!peer) {
+      try { peer = getUserPeer(req.user.id); } catch (e) {}
+    }
     const limit = req.body?.limit ? Number(req.body.limit) : 1000;
     const result = await syncChannelHistory({
       peerRef: peer,
       ownerId: req.user.id,
       limit,
     });
+    emitSyncChange(req.user.id, 0);
     res.json({ ok: true, ...result });
   } catch (e) {
     bad(res, e.status || 500, e.message);

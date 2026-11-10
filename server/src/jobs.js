@@ -3,6 +3,7 @@ import fs from "node:fs";
 import { db, q, now } from "./db.js";
 import { cfg } from "./config.js";
 import { deleteMessages } from "./telegram.js";
+import { startKeepAlive } from "./keepalive.js";
 
 /**
  * Blob Garbage Collection job.
@@ -133,6 +134,9 @@ export async function createDBSnapshot() {
  * Start background maintenance schedules.
  */
 export function startBackgroundJobs() {
+  // Auto-ping keep-alive (prevents cloud container idle sleep)
+  startKeepAlive();
+
   // Run GC daily (24h)
   setInterval(() => {
     runBlobGC().catch((e) => console.error("[gc scheduled error]", e.message));

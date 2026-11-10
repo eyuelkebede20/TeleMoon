@@ -51,7 +51,7 @@ export default function Connect({ status, canSkip, onDone, onLogout }) {
     setSyncing(true);
     setErr("");
     try {
-      const res = await api.syncTelegram(1000);
+      const res = await api.syncTelegram(1000, syncPrompt?.channelId);
       setSyncResult(res);
     } catch (e) {
       setErr("Sync failed: " + e.message);

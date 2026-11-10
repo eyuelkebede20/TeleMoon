@@ -6,6 +6,9 @@ import {
   createDropLink, getDropLinkByCode, getDropLinkById,
   updateDropLink, deleteDropLink,
 } from "../src/db.js";
+import {
+  learnPublicUrl, getKeepAliveStatus, updateKeepAliveConfig, stopKeepAlive,
+} from "../src/keepalive.js";
 
 console.log("Running server sync engine tests...");
 
@@ -142,4 +145,19 @@ const delRes = deleteDropLink(drop1.id, userId);
 assert.equal(delRes.ok, true, "Deleted drop link");
 assert.equal(getDropLinkById(drop1.id), undefined);
 
-console.log("All server sync engine & drop link tests PASSED successfully!");
+// 9. Test Keep-Alive / Auto-Ping Engine
+learnPublicUrl("http://localhost:3000"); // should be ignored
+assert.ok(!getKeepAliveStatus().targetUrl?.includes("localhost"), "Localhost was not learned");
+
+learnPublicUrl("https://telemoon.ethiodeploy.com");
+const kaStatus = getKeepAliveStatus();
+assert.equal(kaStatus.targetUrl, "https://telemoon.ethiodeploy.com/api/ping", "Learned and normalized public URL");
+
+updateKeepAliveConfig({ enabled: true, intervalMin: 5, url: "https://my-drive.up.railway.app" });
+const kaUpdated = getKeepAliveStatus();
+assert.equal(kaUpdated.targetUrl, "https://my-drive.up.railway.app/api/ping", "Custom URL configured");
+assert.equal(kaUpdated.intervalMin, 5, "Interval updated to 5m");
+assert.equal(kaUpdated.enabled, true);
+stopKeepAlive();
+
+console.log("All server sync engine, drop link & keep-alive tests PASSED successfully!");

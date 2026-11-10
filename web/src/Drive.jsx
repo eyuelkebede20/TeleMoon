@@ -350,7 +350,7 @@ export default function Drive({ user, onLogout, onStorage, onOpenDrop }) {
   async function handleSyncTelegram() {
     setSyncing(true);
     try {
-      const res = await api.syncTelegram(1000);
+      const res = await api.syncTelegram(1000, user?.channel_id || status?.channel);
       setToastMessage(
         `✓ Telegram sync complete: imported ${res.imported} new file(s) into Telegram Inbox (${res.scanned} messages scanned).`
       );
@@ -644,6 +644,16 @@ export default function Drive({ user, onLogout, onStorage, onOpenDrop }) {
         {status?.telegram === "connected"
           ? <>Linked to <b>{status.channel}</b> · parts of {fmtBytes(status.chunkBytes)}</>
           : <>Storage offline{status?.error ? ` — ${status.error}` : ""}</>}
+        {status?.keepAlive?.enabled && (
+          <span
+            className="dim mono"
+            title={`Keep-alive auto-pinger: ${status.keepAlive.targetUrl || "listening for public URL"} (every ${status.keepAlive.intervalMin}m, ${status.keepAlive.pingCount} pings sent)`}
+            style={{ marginLeft: 10, fontSize: "0.82em", display: "inline-flex", alignItems: "center", gap: 5, cursor: "default" }}
+          >
+            <span style={{ width: 6, height: 6, borderRadius: "50%", background: status.keepAlive.lastStatus === 200 || !status.keepAlive.lastStatus ? "#10b981" : "#f59e0b", display: "inline-block" }} />
+            keep-alive
+          </span>
+        )}
         <button className="ghost storage-link" onClick={onStorage}>Storage…</button>
       </footer>
 

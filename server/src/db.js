@@ -365,6 +365,7 @@ export function getIndexedMessageIds(ownerId) {
     FROM chunks c
     JOIN nodes n ON c.file_id = n.id
     WHERE (? IS NULL OR n.owner_id = ? OR n.owner_id IS NULL)
+      AND n.deleted_at IS NULL
   `).all(ownerId || null, ownerId || null);
   return new Set(rows.map((r) => r.msg_id));
 }
