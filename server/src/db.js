@@ -89,6 +89,14 @@ function initBaseTables() {
       updated_at INTEGER NOT NULL
     );
     CREATE UNIQUE INDEX IF NOT EXISTS idx_drop_links_code ON drop_links(code COLLATE NOCASE);
+    CREATE TABLE IF NOT EXISTS tg_entities (
+      id TEXT PRIMARY KEY,
+      access_hash TEXT,
+      title TEXT,
+      username TEXT,
+      class_name TEXT,
+      updated_at INTEGER NOT NULL
+    );
   `);
 }
 
@@ -262,6 +270,31 @@ export const getSetting = (k) =>
 export const setSetting = (k, v) =>
   q(`INSERT INTO settings(key,value) VALUES (?,?)
      ON CONFLICT(key) DO UPDATE SET value=excluded.value`).run(k, String(v));
+
+export function saveTgEntity({ id, accessHash, title, username, className }) {
+  if (!id) return;
+  const cleanId = String(id).replace(/^-100/, "").replace(/^-/, "");
+  q(`
+    INSERT INTO tg_entities(id, access_hash, title, username, class_name, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      access_hash = COALESCE(excluded.access_hash, tg_entities.access_hash),
+      title = COALESCE(excluded.title, tg_entities.title),
+      username = COALESCE(excluded.username, tg_entities.username),
+      class_name = COALESCE(excluded.class_name, tg_entities.class_name),
+      updated_at = excluded.updated_at
+  `).run(cleanId, accessHash ? String(accessHash) : null, title || null, username || null, className || null, now());
+}
+
+export function getTgEntity(idOrUsername) {
+  if (!idOrUsername) return null;
+  const s = String(idOrUsername).trim().replace(/^@/, "");
+  const cleanId = s.replace(/^-100/, "").replace(/^-/, "");
+  return q(`
+    SELECT * FROM tg_entities
+    WHERE id = ? OR username = ? COLLATE NOCASE
+  `).get(cleanId, s);
+}
 
 /* ==========================================================================
    VIRTUAL FILESYSTEM & HIERARCHY HELPERS

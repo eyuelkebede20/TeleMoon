@@ -8,7 +8,9 @@ import bigInt from "big-integer";
 import { cfg } from "./config.js";
 import {
   ensureInboxFolder, createFileNode, getSetting, setSetting, getIndexedMessageIds,
+  saveTgEntity, getTgEntity, q,
 } from "./db.js";
+import { emitSyncChange } from "./sync.js";
 
 const { TelegramClient, Api } = telegram;
 const { StringSession } = sessionsMod;
@@ -90,6 +92,17 @@ export async function setChannel(refOrEntity) {
   const isChannel = ent.className === "Channel";
   const formattedId = isChannel ? `-100${ent.id.toString()}` : `-${ent.id.toString()}`;
   setSetting("channel", formattedId);
+  try {
+    saveTgEntity({
+      id: ent.id.toString(),
+      accessHash: ent.accessHash?.toString?.() || null,
+      title: ent.title || null,
+      username: ent.username || null,
+      className: ent.className || null,
+    });
+  } catch (e) {
+    console.warn("[tg] saveTgEntity in setChannel:", e.message);
+  }
   return { id: formattedId, title: ent.title || "Untitled" };
 }
 
@@ -210,7 +223,20 @@ export async function listDialogs() {
 export async function resolvePeer(refOrEntity) {
   if (!tg.client) throw err("Telegram offline", 503);
   if (!refOrEntity) return tg.channel;
-  if (typeof refOrEntity === "object" && refOrEntity.className) return refOrEntity;
+  if (typeof refOrEntity === "object" && refOrEntity.className) {
+    if (refOrEntity.id && (refOrEntity.className === "Channel" || refOrEntity.className === "Chat")) {
+      try {
+        saveTgEntity({
+          id: refOrEntity.id.toString(),
+          accessHash: refOrEntity.accessHash?.toString?.() || null,
+          title: refOrEntity.title || null,
+          username: refOrEntity.username || null,
+          className: refOrEntity.className || null,
+        });
+      } catch (_) {}
+    }
+    return refOrEntity;
+  }
 
   let r = String(refOrEntity).trim();
 
@@ -226,12 +252,32 @@ export async function resolvePeer(refOrEntity) {
     }
   }
 
+  const cleanR = r.replace(/^-100/, "").replace(/^-/, "");
+
   if (tg.channel) {
-    const chanIdStr = tg.channel.id.toString();
-    const cleanR = r.replace(/^-100/, "").replace(/^-/, "");
+    const chanIdStr = tg.channel.id.toString().replace(/^-100/, "").replace(/^-/, "");
     if (cleanR === chanIdStr || r === tg.channel.username || (r.startsWith("@") && r.slice(1) === tg.channel.username)) {
       return tg.channel;
     }
+  }
+
+  // Check persistent SQLite database for entity access_hash
+  try {
+    const savedEntity = getTgEntity(cleanR) || getTgEntity(r);
+    if (savedEntity) {
+      if (savedEntity.class_name === "Channel" && savedEntity.access_hash) {
+        return new Api.InputPeerChannel({
+          channelId: bigInt(savedEntity.id),
+          accessHash: bigInt(savedEntity.access_hash),
+        });
+      } else if (savedEntity.class_name === "Chat") {
+        return new Api.InputPeerChat({
+          chatId: bigInt(savedEntity.id),
+        });
+      }
+    }
+  } catch (dbErr) {
+    console.warn("[tg] SQLite entity lookup warning:", dbErr.message);
   }
 
   let targetId = r;
@@ -244,7 +290,19 @@ export async function resolvePeer(refOrEntity) {
   }
 
   try {
-    return await tg.client.getEntity(/^-?\d+$/.test(targetId) ? bigInt(targetId) : targetId.startsWith("@") ? targetId : `@${targetId}`);
+    const ent = await tg.client.getEntity(/^-?\d+$/.test(targetId) ? bigInt(targetId) : targetId.startsWith("@") ? targetId : `@${targetId}`);
+    if (ent && ent.id) {
+      try {
+        saveTgEntity({
+          id: ent.id.toString(),
+          accessHash: ent.accessHash?.toString?.() || null,
+          title: ent.title || null,
+          username: ent.username || null,
+          className: ent.className || null,
+        });
+      } catch (_) {}
+    }
+    return ent;
   } catch (err1) {
     if (tg.mode !== "bot") {
       try {
@@ -257,7 +315,18 @@ export async function resolvePeer(refOrEntity) {
           const matchUname = targetId.startsWith("@") ? targetId.slice(1).toLowerCase() : targetId.toLowerCase();
           return eid === cleanT || (uname && uname === matchUname);
         });
-        if (found?.entity) return found.entity;
+        if (found?.entity) {
+          try {
+            saveTgEntity({
+              id: found.entity.id.toString(),
+              accessHash: found.entity.accessHash?.toString?.() || null,
+              title: found.entity.title || null,
+              username: found.entity.username || null,
+              className: found.entity.className || null,
+            });
+          } catch (_) {}
+          return found.entity;
+        }
       } catch (_) {}
     }
 
@@ -288,26 +357,25 @@ export async function resolvePeer(refOrEntity) {
 /**
  * Scan past history of a channel / group and index all documents & photos into the virtual drive.
  */
-export async function syncChannelHistory({ peerRef, ownerId, limit = 1000 } = {}) {
+export async function syncChannelHistory({ peerRef, ownerId, targetParentId = "root", limit = 1000 } = {}) {
   if (!tg.client) throw err("Telegram offline", 503);
-  const inbox = ensureInboxFolder(ownerId);
-
-  // In bot mode, Telegram MTProto strictly restricts messages.getHistory to user sessions only.
-  // In bot mode, incoming files are dynamically indexed in real-time as they arrive via onChannelPost.
-  if (tg.mode === "bot") {
-    return {
-      scanned: 0,
-      imported: 0,
-      skipped: 0,
-      botMode: true,
-      folderId: inbox.id,
-      folderName: inbox.name,
-      message: "Telegram bots receive incoming files in real-time as they are posted in the channel/group.",
-    };
-  }
 
   const entity = await resolvePeer(peerRef);
   if (!entity) throw err("No channel or group connected", 400);
+
+  // Elevate any previously imported files sitting inside "Telegram Inbox" directly to 'root'
+  try {
+    q(`
+      UPDATE nodes
+      SET parent_id = ?
+      WHERE parent_id IN (
+        SELECT id FROM nodes WHERE name = 'Telegram Inbox' AND type = 'folder'
+      )
+      AND (owner_id = ? OR owner_id IS NULL)
+    `).run(targetParentId || "root", ownerId || null);
+  } catch (e) {
+    console.warn("[tg] Elevate Inbox files warning:", e.message);
+  }
 
   const existingMsgIds = getIndexedMessageIds(ownerId);
 
@@ -315,122 +383,247 @@ export async function syncChannelHistory({ peerRef, ownerId, limit = 1000 } = {}
   let imported = 0;
   let skipped = 0;
 
+  const processMessage = (m) => {
+    if (!m) return false;
+    scanned++;
+
+    // Skip TeleMoon multipart uploads
+    if ((m.message || "").startsWith("tm1;")) {
+      skipped++;
+      return false;
+    }
+
+    const doc = m.media?.document;
+    const photo = m.media?.photo;
+    if (!doc && !photo) return false;
+
+    // Skip stickers
+    if (doc?.attributes?.some((a) => a.className === "DocumentAttributeSticker")) {
+      return false;
+    }
+
+    // Already indexed in our database
+    if (existingMsgIds.has(m.id)) {
+      skipped++;
+      return false;
+    }
+
+    let name;
+    let size = 0;
+    let mime = null;
+
+    if (doc) {
+      const fnAttr = doc.attributes?.find(
+        (a) => a.className === "DocumentAttributeFilename"
+      );
+      name = fnAttr?.fileName;
+      if (!name) {
+        const audioAttr = doc.attributes?.find(
+          (a) => a.className === "DocumentAttributeAudio"
+        );
+        if (audioAttr?.title) {
+          name = `${audioAttr.performer ? audioAttr.performer + " - " : ""}${audioAttr.title}`;
+          const ext = doc.mimeType?.includes("ogg") ? ".ogg" : doc.mimeType?.includes("mp3") ? ".mp3" : ".m4a";
+          if (!name.endsWith(ext)) name += ext;
+        } else if (doc.attributes?.some((a) => a.className === "DocumentAttributeVideo")) {
+          name = `video_${m.id}.mp4`;
+        } else {
+          const ext = doc.mimeType ? `.${doc.mimeType.split("/")[1] || "bin"}` : "";
+          name = `telegram_${m.id}${ext}`;
+        }
+      }
+      size = Number(doc.size?.toString?.() ?? doc.size);
+      mime = doc.mimeType || null;
+    } else if (photo) {
+      const sizes = photo.sizes || [];
+      const large = sizes[sizes.length - 1];
+      size = Number(large?.size || (large?.w && large?.h ? Math.round(large.w * large.h * 0.3) : 100000));
+      mime = "image/jpeg";
+      const caption = (m.message || "").trim().slice(0, 40).replace(/[/\\]/g, "-");
+      name = caption ? `${caption}_${m.id}.jpg` : `photo_${m.id}.jpg`;
+    }
+
+    name = String(name || `telegram_${m.id}`).replace(/[/\\]/g, "-").trim() || `telegram_${m.id}`;
+    if (!size || isNaN(size)) return false;
+
+    createFileNode({
+      parentId: targetParentId || "root",
+      name,
+      size,
+      mime,
+      ownerId: ownerId || null,
+      parts: [{ msg_id: m.id, size }],
+    });
+
+    existingMsgIds.add(m.id);
+    imported++;
+    return true;
+  };
+
+  let iterSuccess = false;
   try {
     for await (const m of tg.client.iterMessages(entity, { limit })) {
-      scanned++;
-      if (!m) continue;
-
-      // Skip TeleMoon multipart uploads
-      if ((m.message || "").startsWith("tm1;")) {
-        skipped++;
-        continue;
-      }
-
-      const doc = m.media?.document;
-      const photo = m.media?.photo;
-      if (!doc && !photo) continue;
-
-      // Skip stickers
-      if (doc?.attributes?.some((a) => a.className === "DocumentAttributeSticker")) {
-        continue;
-      }
-
-      // Already indexed in our database
-      if (existingMsgIds.has(m.id)) {
-        skipped++;
-        continue;
-      }
-
-      let name;
-      let size = 0;
-      let mime = null;
-
-      if (doc) {
-        const fnAttr = doc.attributes?.find(
-          (a) => a.className === "DocumentAttributeFilename"
-        );
-        name = fnAttr?.fileName;
-        if (!name) {
-          const audioAttr = doc.attributes?.find(
-            (a) => a.className === "DocumentAttributeAudio"
-          );
-          if (audioAttr?.title) {
-            name = `${audioAttr.performer ? audioAttr.performer + " - " : ""}${audioAttr.title}`;
-            const ext = doc.mimeType?.includes("ogg") ? ".ogg" : doc.mimeType?.includes("mp3") ? ".mp3" : ".m4a";
-            if (!name.endsWith(ext)) name += ext;
-          } else if (doc.attributes?.some((a) => a.className === "DocumentAttributeVideo")) {
-            name = `video_${m.id}.mp4`;
-          } else {
-            const ext = doc.mimeType ? `.${doc.mimeType.split("/")[1] || "bin"}` : "";
-            name = `telegram_${m.id}${ext}`;
-          }
-        }
-        size = Number(doc.size?.toString?.() ?? doc.size);
-        mime = doc.mimeType || null;
-      } else if (photo) {
-        const sizes = photo.sizes || [];
-        const large = sizes[sizes.length - 1];
-        size = Number(large?.size || (large?.w && large?.h ? Math.round(large.w * large.h * 0.3) : 100000));
-        mime = "image/jpeg";
-        const caption = (m.message || "").trim().slice(0, 40).replace(/[/\\]/g, "-");
-        name = caption ? `${caption}_${m.id}.jpg` : `photo_${m.id}.jpg`;
-      }
-
-      name = String(name || `telegram_${m.id}`).replace(/[/\\]/g, "-").trim() || `telegram_${m.id}`;
-      if (!size || isNaN(size)) continue;
-
-      createFileNode({
-        parentId: inbox.id,
-        name,
-        size,
-        mime,
-        ownerId: ownerId || null,
-        parts: [{ msg_id: m.id, size }],
-      });
-
-      existingMsgIds.add(m.id);
-      imported++;
+      processMessage(m);
     }
+    iterSuccess = true;
   } catch (iterErr) {
     const iterMsg = iterErr.errorMessage || iterErr.message || "";
-    if (/CHAT_ADMIN_REQUIRED|CHANNEL_PRIVATE|USER_NOT_PARTICIPANT/i.test(iterMsg)) {
-      throw err("TeleMoon cannot read history from this channel. Ensure the bot/account is a member/admin with permission to read messages.", 403);
+    console.warn(`[tg] iterMessages encountered: ${iterMsg}. Attempting fallback...`);
+
+    const isRestricted = /CHAT_ADMIN_REQUIRED|BOT_METHOD_INVALID|CHANNEL_PRIVATE/i.test(iterMsg);
+    if (!isRestricted && tg.mode !== "bot") {
+      throw err(iterMsg || "Failed to scan Telegram history", 400);
     }
-    throw err(iterMsg || "Failed to scan Telegram history", 400);
+
+    try {
+      let maxId = 0;
+      try {
+        const full = await tg.client.invoke(new Api.channels.GetFullChannel({ channel: entity }));
+        maxId = full?.fullChat?.readInboxMaxId || full?.fullChat?.readOutboxMaxId || full?.fullChat?.pts || 0;
+      } catch (_) {}
+
+      if (!maxId || maxId < 1) {
+        maxId = 500;
+      }
+
+      const scanLimit = Math.min(limit, 1000);
+      const startId = Math.max(1, maxId - scanLimit + 1);
+
+      for (let fromId = maxId; fromId >= startId; fromId -= 100) {
+        const batchIds = [];
+        for (let i = fromId; i > Math.max(0, fromId - 100) && i >= startId; i--) {
+          batchIds.push(i);
+        }
+        if (!batchIds.length) break;
+
+        try {
+          const msgs = await tg.client.getMessages(entity, { ids: batchIds });
+          for (const m of msgs) {
+            if (m && m.id) processMessage(m);
+          }
+        } catch (batchErr) {
+          console.warn("[tg] batch getMessages warning:", batchErr.message);
+          break;
+        }
+      }
+      iterSuccess = true;
+    } catch (fallbackErr) {
+      console.warn("[tg] Fallback batch scan warning:", fallbackErr.message);
+      if (imported === 0 && !iterSuccess) {
+        throw err(iterMsg || fallbackErr.message || "Could not read chat history", 400);
+      }
+    }
   }
 
-  return { scanned, imported, skipped, folderId: inbox.id, folderName: inbox.name };
+  // Notify connected clients
+  if (ownerId) {
+    emitSyncChange(ownerId, 0);
+  }
+  emitSyncChange("system", 0);
+
+  return {
+    scanned,
+    imported,
+    skipped,
+    folderId: targetParentId || "root",
+    folderName: targetParentId === "root" ? "Main Drive" : targetParentId,
+  };
 }
 
 function onChannelPost(ev) {
   try {
     const m = ev.message;
-    const cid = m?.peerId?.channelId;
+    const cid = m?.peerId?.channelId || m?.peerId?.chatId;
     if (!cid) return;
-    if (!tg.channel) {
-      console.log(`[setup] channel id: -100${cid}`); // aid for bot-mode linking
+
+    if (ev.chat) {
+      try {
+        saveTgEntity({
+          id: ev.chat.id?.toString(),
+          accessHash: ev.chat.accessHash?.toString?.() || null,
+          title: ev.chat.title || null,
+          username: ev.chat.username || null,
+          className: ev.chat.className || null,
+        });
+      } catch (_) {}
+    }
+
+    const cidStr = cid.toString();
+    const cleanCid = cidStr.replace(/^-100/, "").replace(/^-/, "");
+
+    let matched = false;
+    if (tg.channel) {
+      const activeClean = tg.channel.id.toString().replace(/^-100/, "").replace(/^-/, "");
+      if (cleanCid === activeClean) matched = true;
+    }
+
+    const user = q(
+      `SELECT id FROM users WHERE channel_id = ? OR channel_id = ? OR channel_id = ? OR channel_id LIKE ?`
+    ).get(`-100${cleanCid}`, `-${cleanCid}`, cleanCid, `%${cleanCid}%`);
+
+    if (!matched && !user) {
+      console.log(`[setup] channel post from unlinked channel id: -100${cid}`);
       return;
     }
-    if (cid.toString() !== tg.channel.id.toString()) return;
-    const doc = m.media?.document;
-    if (!doc) return; // photos/stickers ignored — send as "File" to index
-    if ((m.message || "").startsWith("tm1;")) return; // our own upload part
-    if (doc.attributes?.some((a) => a.className === "DocumentAttributeSticker")) return;
 
-    const fnAttr = doc.attributes?.find(
-      (a) => a.className === "DocumentAttributeFilename"
-    );
-    const name = fnAttr?.fileName || `telegram_${m.id}`;
-    const size = Number(doc.size?.toString?.() ?? doc.size);
-    const inbox = ensureInboxFolder();
+    const doc = m.media?.document;
+    const photo = m.media?.photo;
+    if (!doc && !photo) return;
+    if ((m.message || "").startsWith("tm1;")) return;
+    if (doc?.attributes?.some((a) => a.className === "DocumentAttributeSticker")) return;
+
+    let name;
+    let size = 0;
+    let mime = null;
+
+    if (doc) {
+      const fnAttr = doc.attributes?.find(
+        (a) => a.className === "DocumentAttributeFilename"
+      );
+      name = fnAttr?.fileName;
+      if (!name) {
+        const audioAttr = doc.attributes?.find(
+          (a) => a.className === "DocumentAttributeAudio"
+        );
+        if (audioAttr?.title) {
+          name = `${audioAttr.performer ? audioAttr.performer + " - " : ""}${audioAttr.title}`;
+          const ext = doc.mimeType?.includes("ogg") ? ".ogg" : doc.mimeType?.includes("mp3") ? ".mp3" : ".m4a";
+          if (!name.endsWith(ext)) name += ext;
+        } else if (doc.attributes?.some((a) => a.className === "DocumentAttributeVideo")) {
+          name = `video_${m.id}.mp4`;
+        } else {
+          const ext = doc.mimeType ? `.${doc.mimeType.split("/")[1] || "bin"}` : "";
+          name = `telegram_${m.id}${ext}`;
+        }
+      }
+      size = Number(doc.size?.toString?.() ?? doc.size);
+      mime = doc.mimeType || null;
+    } else if (photo) {
+      const sizes = photo.sizes || [];
+      const large = sizes[sizes.length - 1];
+      size = Number(large?.size || (large?.w && large?.h ? Math.round(large.w * large.h * 0.3) : 100000));
+      mime = "image/jpeg";
+      const caption = (m.message || "").trim().slice(0, 40).replace(/[/\\]/g, "-");
+      name = caption ? `${caption}_${m.id}.jpg` : `photo_${m.id}.jpg`;
+    }
+
+    name = String(name || `telegram_${m.id}`).replace(/[/\\]/g, "-").trim() || `telegram_${m.id}`;
+    if (!size || isNaN(size)) return;
+
+    const ownerId = user ? user.id : null;
     const node = createFileNode({
-      parentId: inbox.id,
+      parentId: "root",
       name,
       size,
-      mime: doc.mimeType || null,
+      mime,
+      ownerId,
       parts: [{ msg_id: m.id, size }],
     });
-    console.log(`[indexer] +${node.name} (${size} B) from channel post ${m.id}`);
+    console.log(`[indexer] +${node.name} (${size} B) from post ${m.id} -> root (owner: ${ownerId || "system"})`);
+    if (ownerId) {
+      emitSyncChange(ownerId, 0);
+    }
+    emitSyncChange("system", 0);
   } catch (e) {
     console.error("[indexer]", e);
   }

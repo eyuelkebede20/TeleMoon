@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, uploadFile } from "./api.js";
+import { api, uploadFile, token } from "./api.js";
 import { useTheme } from "./theme.js";
 import FolderShareModal from "./FolderShareModal.jsx";
 import {
@@ -241,6 +241,22 @@ export default function Drive({ user, onLogout, onStorage, onOpenDrop }) {
     return () => clearInterval(t);
   }, []);
 
+  // Real-time server-sent events for Telegram posts and drive updates
+  useEffect(() => {
+    const tkn = token.get();
+    if (!tkn) return;
+    let es;
+    try {
+      es = new EventSource(`/api/sync/events?t=${encodeURIComponent(tkn)}`);
+      es.addEventListener("change", () => {
+        refresh();
+      });
+    } catch (_) {}
+    return () => {
+      es?.close();
+    };
+  }, [refresh]);
+
   async function open(node) {
     if (node.type === "folder") {
       setQ("");
@@ -351,13 +367,9 @@ export default function Drive({ user, onLogout, onStorage, onOpenDrop }) {
     setSyncing(true);
     try {
       const res = await api.syncTelegram(1000, user?.channel_id || status?.channel);
-      if (res.botMode) {
-        setToastMessage("Telegram bot is active: any files sent to your group sync into /Telegram Inbox in real-time.");
-      } else {
-        setToastMessage(
-          `✓ Telegram sync complete: imported ${res.imported} new file(s) into Telegram Inbox (${res.scanned} messages scanned).`
-        );
-      }
+      setToastMessage(
+        `✓ Telegram sync complete: imported ${res.imported} file(s) into your drive (${res.scanned} messages scanned).`
+      );
       refresh();
     } catch (e) {
       setToastMessage(`Sync failed: ${e.message}`);

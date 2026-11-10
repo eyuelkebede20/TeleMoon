@@ -176,21 +176,17 @@ export default function Connect({ status, user, canSkip, onDone, onLogout, onUse
               <p style={{ margin: "0 0 16px", fontSize: "0.95rem", lineHeight: 1.5 }}>
                 Successfully linked to <b>{syncPrompt.title}</b>!
                 <br /><br />
-                {status.mode === "bot"
-                  ? "Your Telegram storage is now connected. Any documents or photos sent to this group will automatically sync into your TeleMoon drive."
-                  : "Would you like to import all existing files from this group's history into TeleMoon?"}
+                Would you like to import all existing files from this chat directly to your TeleMoon drive?
               </p>
               {syncing && <p className="dim" style={{ fontSize: "0.9rem" }}>Scanning messages and indexing files…</p>}
               {syncResult && (
                 <p style={{ color: "var(--moon)", fontSize: "0.9rem", lineHeight: 1.4 }}>
-                  {syncResult.botMode
-                    ? "✓ Telegram bot is active: any files sent to your group will appear in /Telegram Inbox automatically."
-                    : `✓ Imported ${syncResult.imported} file(s) into /Telegram Inbox! (${syncResult.scanned} messages scanned)`}
+                  ✓ Imported {syncResult.imported} file(s) directly to your drive! ({syncResult.scanned} messages scanned)
                 </p>
               )}
               {err && <p className="auth-err" style={{ marginTop: 8 }}>{err}</p>}
               <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end", marginTop: "20px" }}>
-                {status.mode === "bot" || syncResult ? (
+                {syncResult ? (
                   <button type="button" className="btn btn-moon" onClick={finishConnect}>
                     Go to Drive
                   </button>
