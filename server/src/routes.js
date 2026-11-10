@@ -726,7 +726,10 @@ api.put("/drop/:code/uploads/:id/parts/:idx", verifyDropTicket, async (req, res)
       totalParts > 1
         ? `${up.name}.part${String(idx + 1).padStart(3, "0")}`
         : up.name;
-    const caption = `tm1;f=${up.name.slice(0, 200)};p=${idx + 1}/${totalParts};drop=${req.dropLink.code}`;
+    const caption =
+      totalParts > 1
+        ? `tm1;f=${up.name.slice(0, 200)};p=${idx + 1}/${totalParts};drop=${req.dropLink.code}\n📁 ${up.name} (Part ${idx + 1}/${totalParts})`
+        : `tm1;f=${up.name.slice(0, 200)};p=1/1;drop=${req.dropLink.code}\n📁 ${up.name}`;
     const msgId = await sendDocument(tmp, partName, caption, peer);
 
     const prev = q(`SELECT msg_id FROM upload_parts WHERE upload_id=? AND idx=?`).get(up.id, idx);
@@ -958,7 +961,10 @@ api.put("/uploads/:id/parts/:idx", auth, async (req, res) => {
       totalParts > 1
         ? `${up.name}.part${String(idx + 1).padStart(3, "0")}`
         : up.name;
-    const caption = `tm1;f=${up.name.slice(0, 200)};p=${idx + 1}/${totalParts}`;
+    const caption =
+      totalParts > 1
+        ? `tm1;f=${up.name.slice(0, 200)};p=${idx + 1}/${totalParts}\n📁 ${up.name} (Part ${idx + 1}/${totalParts})`
+        : `tm1;f=${up.name.slice(0, 200)};p=1/1\n📁 ${up.name}`;
     const msgId = await sendDocument(tmp, partName, caption, peer);
 
     // Retried part? Drop the superseded Telegram message.

@@ -493,8 +493,8 @@ export default function Drive({ user, onLogout, onStorage, onOpenDrop }) {
           {q && <button className="ghost" onClick={() => setQ("")} aria-label="Clear search"><XIcon /></button>}
         </div>
         <div className="top-actions">
-          <button className="btn" onClick={() => share(cwd)} title="Create or manage drop upload link for this folder">
-            <SendIcon /> Send a link
+          <button className="btn" onClick={() => share(cwd)} title="Create or manage drop upload link to receive files">
+            <SendIcon /> Upload Link
           </button>
           <button className="btn" onClick={handleSyncTelegram} disabled={syncing} title="Sync files from Telegram chat history">
             <SyncIcon className={syncing ? "spin" : ""} /> {syncing ? "Syncing…" : "Sync Telegram"}

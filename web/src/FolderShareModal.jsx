@@ -49,6 +49,10 @@ export default function FolderShareModal({ folder, onClose }) {
   }, [folder.id]);
 
   const handleCreate = async () => {
+    if (usePassword && !password.trim()) {
+      setErr("Please enter a password or PIN, or uncheck password protection.");
+      return;
+    }
     setBusy(true);
     setErr("");
     try {
@@ -61,6 +65,7 @@ export default function FolderShareModal({ folder, onClose }) {
       setCode(res.dropLink.code);
       setTitle(res.dropLink.title || "");
       setIsActive(Boolean(res.dropLink.is_active));
+      setUsePassword(Boolean(res.dropLink.password_hash));
       setSuccess("✓ Upload link created!");
       setTimeout(() => setSuccess(""), 3000);
     } catch (e) {
@@ -72,12 +77,16 @@ export default function FolderShareModal({ folder, onClose }) {
 
   const handleUpdate = async () => {
     if (!dropLink) return;
+    if (usePassword && !password.trim() && !dropLink.password_hash) {
+      setErr("Please enter a password or PIN, or uncheck password protection.");
+      return;
+    }
     setBusy(true);
     setErr("");
     try {
       const res = await api.updateDropLink(dropLink.id, {
         code: code.trim(),
-        password: usePassword ? password.trim() : "",
+        password: usePassword ? (password.trim() || undefined) : "",
         is_active: isActive ? 1 : 0,
         title: title.trim(),
       });
@@ -133,7 +142,7 @@ export default function FolderShareModal({ folder, onClose }) {
       <div className="modal-card" style={{ maxWidth: 520, minHeight: "auto" }} onClick={(e) => e.stopPropagation()}>
         <header>
           <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-            <span className="upname">Share Folder: "{folder.name}"</span>
+            <span className="upname">{folder.id === "root" || folder.name === "TeleMoon" ? "Upload Link for Drive" : `Upload Link for "${folder.name}"`}</span>
           </div>
           <button type="button" className="ghost" onClick={onClose}><XIcon /></button>
         </header>
@@ -157,7 +166,7 @@ export default function FolderShareModal({ folder, onClose }) {
             }}
             onClick={() => setTab("drop")}
           >
-            <SendIcon style={{ width: 16, height: 16 }} /> Send a link (Uploads)
+            <SendIcon style={{ width: 16, height: 16 }} /> Upload Link (Receive Files)
           </button>
           <button
             type="button"
@@ -445,20 +454,20 @@ export default function FolderShareModal({ folder, onClose }) {
                   <div style={{ display: "inline-flex", padding: 14, borderRadius: "50%", background: "var(--panel-2)", marginBottom: 14, color: "var(--moon-deep)" }}>
                     <SendIcon style={{ width: 28, height: 28 }} />
                   </div>
-                  <h3 style={{ margin: "0 0 8px", fontSize: "1.15rem" }}>Send a Link to Upload Files</h3>
+                  <h3 style={{ margin: "0 0 8px", fontSize: "1.15rem" }}>Share a Link to Upload Files</h3>
                   <p className="dim" style={{ margin: "0 0 20px", fontSize: "0.9rem", lineHeight: 1.5 }}>
-                    Generate a simple link or 4-digit code so anyone can upload files straight into <b>"{folder.name}"</b> without needing an account.
+                    Generate an easy-to-remember link so anyone can upload files directly into your TeleMoon drive and Telegram group without needing an account.
                   </p>
 
                   <div style={{ maxWidth: 360, margin: "0 auto 20px", textAlign: "left", display: "flex", flexDirection: "column", gap: 10 }}>
                     <div>
                       <label style={{ fontSize: "0.8rem", color: "var(--muted)", display: "block", marginBottom: 4 }}>
-                        Custom Code / 4-Digit Code (leave blank to auto-generate):
+                        Custom Link Name (leave blank for a memorable name):
                       </label>
                       <input
                         value={code}
                         onChange={(e) => setCode(e.target.value.toLowerCase().replace(/[^a-z0-9_-]/g, ""))}
-                        placeholder="e.g. 4829 or qq"
+                        placeholder="e.g. homework, my-files, or 1234"
                         style={{
                           width: "100%",
                           padding: "8px 12px",
@@ -477,15 +486,16 @@ export default function FolderShareModal({ folder, onClose }) {
                         checked={usePassword}
                         onChange={(e) => setUsePassword(e.target.checked)}
                       />
-                      <span>Protect with password or 4-digit PIN</span>
+                      <span>Require password or PIN before upload</span>
                     </label>
                     {usePassword && (
                       <input
                         type="password"
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
-                        placeholder="Enter PIN or password"
+                        placeholder="Enter password or 4-digit PIN"
                         style={{
+                          width: "100%",
                           padding: "8px 12px",
                           borderRadius: 8,
                           border: "1px solid var(--line)",
