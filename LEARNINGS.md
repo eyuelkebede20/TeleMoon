@@ -40,3 +40,39 @@ Living log of architecture decisions (ADRs), ecosystem library evaluations, edge
 
 - Audit light mode styling in `LinkStorageScreen` to ensure creamy palette is strictly respected.
 - Ensure all Flutter widget tests run in isolated environments without resource contention.
+
+---
+
+## 2026-11-10 — Auth Separation, Channel Linking Trap & Stale Session Remediation
+
+**Goal:** Separate Login and Sign-up flows, restore interactive canvas animation in dark blue, fix channel linking trap, and resolve 401/404 session verification errors.
+
+### Libraries evaluated
+
+| Library | Maintained? | License | Size | Verdict | Reason |
+| --- | --- | --- | --- | --- | --- |
+| Native Canvas 2D + RequestAnimationFrame | Yes | N/A | 0 kB | Selected | Pure high-performance fluid rendering with DPR awareness and reduced-motion fallback. |
+| `bcryptjs` + `jsonwebtoken` | Yes | MIT | 45 kB | Selected | Existing reliable authentication foundation. |
+
+### Edge cases & gotchas discovered
+
+1. **Connect Trap / Lost React State on Channel Link:**
+   - In `Connect.jsx`, `api.saveChannel()` updated `localStorage` via `savedUser.set(...)`, but never invoked a state updater callback in `App.jsx`.
+   - As a result, `App.jsx`'s `user.channel_id` remained `null`, which kept `if (!user.channel_id)` true, immediately redirecting the user back to `<Connect>` in an inescapable loop.
+   - Fix: Added `onUserUpdate` callback prop to `<Connect>`, updating both `localStorage` and `App.jsx` React state immediately upon channel link.
+2. **Missing Endpoints Causing 404s & 401 Loops:**
+   - `/api/public-status` and `/api/auth/logout` were missing from the router, triggering 404s on every page load and sign-out.
+   - When a stored token was invalid or expired, `App.jsx` lacked boot verification, leading to consecutive 401s on `/api/tg/dialogs` and `/api/auth/me`.
+   - Fix: Added `GET /api/public-status`, `POST /api/auth/logout`, and boot-time session verification via `api.me()` that gracefully purges expired tokens and resets to the Login tab.
+3. **Implicit vs Explicit Auth Flow:**
+   - Single "enter" door confused users because typing an existing handle with a typo in password failed ambiguously or vice-versa.
+   - Fix: Split into explicit `POST /api/auth/login` (404 if handle absent, 401 if wrong password) and `POST /api/auth/signup` (409 if handle taken, 201 on success), while retaining `POST /api/auth/enter` for backward compatibility.
+4. **Interactive Canvas Night Sky Theme Restoration:**
+   - Restored `AuthCanvas` with the signature TeleMoon dark blue/indigo night sky (`#0e1220` -> `#121730` -> `#090d18`), featuring the 3D-kinematic paper airplane, liquid metaballs, contrail wakes, and dynamic light/dark adaptability.
+
+### Decision
+
+- Fully separated Login and Sign-up tabs with client and server validation.
+- Boot session verification hook in `App.jsx` with automatic cleanup of stale credentials.
+- Two-way user state sync between `Connect.jsx` and `App.jsx`.
+- Comprehensive automated test suite in `server/test/auth.test.js`.

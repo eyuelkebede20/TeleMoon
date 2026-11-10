@@ -5,7 +5,7 @@ import { Crescent, LinkIcon, MegaphoneIcon, UsersIcon, SunIcon, MoonIcon } from 
 
 // Link a storage channel: paste a private t.me/+… link (user session joins it),
 // an @name, or a -100… id — or pick from channels this account already has.
-export default function Connect({ status, canSkip, onDone, onLogout }) {
+export default function Connect({ status, user, canSkip, onDone, onLogout, onUserUpdate }) {
   const { theme, toggleTheme } = useTheme();
   const [link, setLink] = useState("");
   const [busy, setBusy] = useState(false);
@@ -34,17 +34,30 @@ export default function Connect({ status, canSkip, onDone, onLogout }) {
         channelId = res.id;
         title = res.title || title;
       } else {
-        await api.saveChannel(ref);
+        const res = await api.saveChannel(ref);
+        if (res?.channel_id) channelId = res.channel_id;
       }
       
-      // Update local storage so the UI knows they have a channel
-      const u = savedUser.get();
-      if (u) savedUser.set({ ...u, channel_id: channelId });
+      // Update local storage and notify parent component so the UI knows they have a channel
+      const u = savedUser.get() || user;
+      const updatedUser = { ...u, channel_id: channelId };
+      savedUser.set(updatedUser);
+      onUserUpdate?.(updatedUser);
       
       setSyncPrompt({ channelId, title });
     }
     catch (e) { setErr(e.message); }
     finally { setBusy(false); }
+  }
+
+  function finishConnect() {
+    if (syncPrompt?.channelId) {
+      const u = savedUser.get() || user;
+      const updatedUser = { ...u, channel_id: syncPrompt.channelId };
+      savedUser.set(updatedUser);
+      onUserUpdate?.(updatedUser);
+    }
+    onDone?.();
   }
 
   async function runSync() {
@@ -74,7 +87,7 @@ export default function Connect({ status, canSkip, onDone, onLogout }) {
           >
             {theme === "light" ? <MoonIcon /> : <SunIcon />}
           </button>
-          {canSkip && <button className="ghost" onClick={onDone}>Back to drive</button>}
+          {canSkip && <button className="ghost" onClick={finishConnect}>Back to drive</button>}
           <button className="ghost" onClick={onLogout}>Sign out</button>
         </div>
       </div>
@@ -172,7 +185,7 @@ export default function Connect({ status, canSkip, onDone, onLogout }) {
               <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end", marginTop: "20px" }}>
                 {!syncResult ? (
                   <>
-                    <button type="button" className="btn" disabled={syncing} onClick={onDone}>
+                    <button type="button" className="btn" disabled={syncing} onClick={finishConnect}>
                       Skip for now
                     </button>
                     <button type="button" className="btn btn-moon" disabled={syncing} onClick={runSync}>
@@ -180,7 +193,7 @@ export default function Connect({ status, canSkip, onDone, onLogout }) {
                     </button>
                   </>
                 ) : (
-                  <button type="button" className="btn btn-moon" onClick={onDone}>
+                  <button type="button" className="btn btn-moon" onClick={finishConnect}>
                     Go to Drive
                   </button>
                 )}

@@ -11,6 +11,6 @@
     "build": "npm -w web run build",
     "start": "npm -w server run start",
     "login": "npm -w server run login",
-    "test": "node server/test/sync.test.js"
+    "test": "node server/test/sync.test.js && node server/test/auth.test.js"
   }
 }

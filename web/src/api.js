@@ -25,7 +25,12 @@ async function j(method, url, body) {
 
 export const api = {
   status: () => j("GET", "/api/status"),
+  publicStatus: () => j("GET", "/api/public-status"),
+  login: (b) => j("POST", "/api/auth/login", b),
+  signup: (b) => j("POST", "/api/auth/signup", b),
   enter: (b) => j("POST", "/api/auth/enter", b),
+  me: () => j("GET", "/api/auth/me"),
+  logout: () => j("POST", "/api/auth/logout").catch(() => ({})),
   dialogs: () => j("GET", "/api/tg/dialogs"),
   connect: (link) => j("POST", "/api/tg/connect", { link }),
   saveChannel: (channel_id) => j("POST", "/api/user/channel", { channel_id }),

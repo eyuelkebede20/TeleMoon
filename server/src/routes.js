@@ -89,7 +89,83 @@ api.get("/status", (_req, res) => {
   });
 });
 
+api.get("/public-status", (_req, res) => {
+  res.json({
+    users: q(`SELECT COUNT(*) c FROM users`).get().c,
+    botUsername: tg.botUsername || cfg.botUsername || "Telemoon2bot",
+    telegram: tg.ready ? "connected" : "offline",
+    channel: tg.channel?.title || null,
+  });
+});
+
 /* ------------------------------------------------------------------ auth */
+
+api.post("/auth/login", async (req, res) => {
+  const { password } = req.body || {};
+  const handle = String(req.body?.handle || "").trim().replace(/^@/, "").toLowerCase();
+  if (!handle) return bad(res, 400, "Handle is required");
+  if (!password) return bad(res, 400, "Password is required");
+
+  const user = q(`SELECT * FROM users WHERE handle=?`).get(handle);
+  if (!user) {
+    return bad(res, 404, `No account found for @${handle}. Please sign up.`);
+  }
+
+  const valid = await bcrypt.compare(password, user.pass_hash);
+  if (!valid) {
+    return bad(res, 401, `Incorrect password for @${handle}`);
+  }
+
+  return res.json({
+    token: sign(user),
+    user: {
+      id: user.id,
+      handle: user.handle,
+      channel_id: user.channel_id || null,
+      telegram_id: user.telegram_id || null,
+      created_at: user.created_at,
+    },
+  });
+});
+
+api.post("/auth/signup", async (req, res) => {
+  const { password, telegramId } = req.body || {};
+  const handle = String(req.body?.handle || "").trim().replace(/^@/, "").toLowerCase();
+  if (!/^[a-z0-9_]{3,32}$/.test(handle)) {
+    return bad(res, 400, "Handle must be 3–32 letters, numbers, or underscores");
+  }
+  if (!password || password.length < 6) {
+    return bad(res, 400, "Password must be at least 6 characters");
+  }
+
+  const existing = q(`SELECT id FROM users WHERE handle=?`).get(handle);
+  if (existing) {
+    return bad(res, 409, `Handle @${handle} is already taken. Please choose another or log in.`);
+  }
+
+  const tgId = telegramId ? String(telegramId).trim().replace(/^@/, "") : null;
+  const u = {
+    id: uid(),
+    handle,
+    pass_hash: await bcrypt.hash(password, 10),
+    created_at: now(),
+    telegram_id: tgId || null,
+  };
+  q(`INSERT INTO users(id,handle,pass_hash,telegram_id,created_at) VALUES (?,?,?,?,?)`)
+    .run(u.id, u.handle, u.pass_hash, u.telegram_id, u.created_at);
+
+  return res.status(201).json({
+    token: sign(u),
+    user: {
+      id: u.id,
+      handle: u.handle,
+      channel_id: null,
+      telegram_id: u.telegram_id,
+      created_at: u.created_at,
+    },
+    created: true,
+  });
+});
 
 api.post("/auth/enter", async (req, res) => {
   const { password } = req.body || {};
@@ -103,19 +179,42 @@ api.post("/auth/enter", async (req, res) => {
   if (user) {
     if (!(await bcrypt.compare(password, user.pass_hash)))
       return bad(res, 401, `wrong password for @${handle}`);
-    return res.json({ token: sign(user), user: { id: user.id, handle, channel_id: user.channel_id } });
+    return res.json({
+      token: sign(user),
+      user: {
+        id: user.id,
+        handle,
+        channel_id: user.channel_id || null,
+        telegram_id: user.telegram_id || null,
+        created_at: user.created_at,
+      },
+    });
   }
 
   const u = { id: uid(), handle, pass_hash: await bcrypt.hash(password, 10), created_at: now(), telegram_id: req.body?.telegramId || null };
   q(`INSERT INTO users(id,handle,pass_hash,telegram_id,created_at) VALUES (?,?,?,?,?)`)
     .run(u.id, u.handle, u.pass_hash, u.telegram_id, u.created_at);
-  res.json({ token: sign(u), user: { id: u.id, handle, telegram_id: u.telegram_id }, created: true });
+  res.status(201).json({
+    token: sign(u),
+    user: {
+      id: u.id,
+      handle,
+      channel_id: null,
+      telegram_id: u.telegram_id,
+      created_at: u.created_at,
+    },
+    created: true,
+  });
 });
 
 api.get("/auth/me", auth, (req, res) => {
   const user = q(`SELECT id, handle, channel_id, telegram_id, created_at FROM users WHERE id=?`).get(req.user.id);
   if (!user) return bad(res, 404, "User not found");
   res.json({ user });
+});
+
+api.post("/auth/logout", (_req, res) => {
+  res.json({ ok: true, message: "Logged out successfully" });
 });
 
 /* ------------------------------------------------------- storage linking */
@@ -140,7 +239,7 @@ api.post("/user/channel", auth, async (req, res) => {
   if (/^\d{10,}$/.test(channel_id)) channel_id = `-100${channel_id}`;
 
   q(`UPDATE users SET channel_id=? WHERE id=?`).run(channel_id, req.user.id);
-  res.json({ ok: true });
+  res.json({ ok: true, channel_id });
 });
 
 api.post("/tg/connect", auth, async (req, res) => {

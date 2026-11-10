@@ -27,10 +27,11 @@ export default function App() {
   const [dropCode, setDropCode] = useState(() => getDropCodeFromUrl());
   const [user, setUser] = useState(() => {
     const u = token.get() ? savedUser.get() : null;
-    return u?.handle ? u : null; // pre-handle sessions are stale
+    return u?.handle ? u : null;
   });
   const [status, setStatus] = useState(null);
   const [managing, setManaging] = useState(false);
+  const [checkingSession, setCheckingSession] = useState(() => Boolean(token.get()));
 
   useEffect(() => {
     const onPop = () => setDropCode(getDropCodeFromUrl());
@@ -55,12 +56,47 @@ export default function App() {
     () => api.status().then(setStatus).catch(() => setStatus({ telegram: "offline", error: "server unreachable" })),
     []
   );
-  useEffect(() => { if (user) refreshStatus(); }, [user, refreshStatus]);
 
-  const logout = () => { token.clear(); savedUser.clear(); setUser(null); setStatus(null); };
+  const logout = useCallback(() => {
+    api.logout().catch(() => {});
+    token.clear();
+    savedUser.clear();
+    setUser(null);
+    setStatus(null);
+    setManaging(false);
+  }, []);
+
+  // Validate and refresh existing session with server on initial boot
+  useEffect(() => {
+    const t = token.get();
+    if (!t) {
+      setCheckingSession(false);
+      return;
+    }
+    api.me()
+      .then((res) => {
+        if (res?.user) {
+          savedUser.set(res.user);
+          setUser(res.user);
+        }
+      })
+      .catch((err) => {
+        console.warn("[session] stored token invalid or expired:", err.message);
+        logout();
+      })
+      .finally(() => {
+        setCheckingSession(false);
+      });
+  }, [logout]);
+
+  useEffect(() => { if (user) refreshStatus(); }, [user, refreshStatus]);
 
   if (dropCode) {
     return <DropUpload code={dropCode} onExit={exitDrop} />;
+  }
+
+  if (checkingSession) {
+    return <div className="boot"><Crescent /></div>;
   }
 
   if (!user) return <Auth onAuth={setUser} onOpenDrop={openDrop} />;
@@ -70,12 +106,17 @@ export default function App() {
     return (
       <Connect
         status={status}
+        user={user}
         canSkip={!!user.channel_id && status.telegram === "connected"}
         onDone={() => {
           setManaging(false);
           const u = savedUser.get();
           if (u) setUser(u);
           refreshStatus();
+        }}
+        onUserUpdate={(updated) => {
+          savedUser.set(updated);
+          setUser(updated);
         }}
         onLogout={logout}
       />
