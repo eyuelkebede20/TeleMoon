@@ -351,9 +351,13 @@ export default function Drive({ user, onLogout, onStorage, onOpenDrop }) {
     setSyncing(true);
     try {
       const res = await api.syncTelegram(1000, user?.channel_id || status?.channel);
-      setToastMessage(
-        `✓ Telegram sync complete: imported ${res.imported} new file(s) into Telegram Inbox (${res.scanned} messages scanned).`
-      );
+      if (res.botMode) {
+        setToastMessage("Telegram bot is active: any files sent to your group sync into /Telegram Inbox in real-time.");
+      } else {
+        setToastMessage(
+          `✓ Telegram sync complete: imported ${res.imported} new file(s) into Telegram Inbox (${res.scanned} messages scanned).`
+        );
+      }
       refresh();
     } catch (e) {
       setToastMessage(`Sync failed: ${e.message}`);

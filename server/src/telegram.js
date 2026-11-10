@@ -290,11 +290,26 @@ export async function resolvePeer(refOrEntity) {
  */
 export async function syncChannelHistory({ peerRef, ownerId, limit = 1000 } = {}) {
   if (!tg.client) throw err("Telegram offline", 503);
+  const inbox = ensureInboxFolder(ownerId);
+
+  // In bot mode, Telegram MTProto strictly restricts messages.getHistory to user sessions only.
+  // In bot mode, incoming files are dynamically indexed in real-time as they arrive via onChannelPost.
+  if (tg.mode === "bot") {
+    return {
+      scanned: 0,
+      imported: 0,
+      skipped: 0,
+      botMode: true,
+      folderId: inbox.id,
+      folderName: inbox.name,
+      message: "Telegram bots receive incoming files in real-time as they are posted in the channel/group.",
+    };
+  }
+
   const entity = await resolvePeer(peerRef);
   if (!entity) throw err("No channel or group connected", 400);
 
   const existingMsgIds = getIndexedMessageIds(ownerId);
-  const inbox = ensureInboxFolder(ownerId);
 
   let scanned = 0;
   let imported = 0;

@@ -176,18 +176,25 @@ export default function Connect({ status, user, canSkip, onDone, onLogout, onUse
               <p style={{ margin: "0 0 16px", fontSize: "0.95rem", lineHeight: 1.5 }}>
                 Successfully linked to <b>{syncPrompt.title}</b>!
                 <br /><br />
-                Would you like to import all existing files from this group's history into TeleMoon?
+                {status.mode === "bot"
+                  ? "Your Telegram storage is now connected. Any documents or photos sent to this group will automatically sync into your TeleMoon drive."
+                  : "Would you like to import all existing files from this group's history into TeleMoon?"}
               </p>
               {syncing && <p className="dim" style={{ fontSize: "0.9rem" }}>Scanning messages and indexing files…</p>}
               {syncResult && (
                 <p style={{ color: "var(--moon)", fontSize: "0.9rem", lineHeight: 1.4 }}>
-                  ✓ Imported {syncResult.imported} file(s) into <b>/Telegram Inbox</b>!
-                  <br /><span className="dim" style={{ fontSize: "0.85rem" }}>({syncResult.scanned} messages scanned)</span>
+                  {syncResult.botMode
+                    ? "✓ Telegram bot is active: any files sent to your group will appear in /Telegram Inbox automatically."
+                    : `✓ Imported ${syncResult.imported} file(s) into /Telegram Inbox! (${syncResult.scanned} messages scanned)`}
                 </p>
               )}
               {err && <p className="auth-err" style={{ marginTop: 8 }}>{err}</p>}
               <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end", marginTop: "20px" }}>
-                {!syncResult ? (
+                {status.mode === "bot" || syncResult ? (
+                  <button type="button" className="btn btn-moon" onClick={finishConnect}>
+                    Go to Drive
+                  </button>
+                ) : (
                   <>
                     <button type="button" className="btn" disabled={syncing} onClick={finishConnect}>
                       Skip for now
@@ -196,10 +203,6 @@ export default function Connect({ status, user, canSkip, onDone, onLogout, onUse
                       {syncing ? "Scanning…" : "Import All Files"}
                     </button>
                   </>
-                ) : (
-                  <button type="button" className="btn btn-moon" onClick={finishConnect}>
-                    Go to Drive
-                  </button>
                 )}
               </div>
             </div>
