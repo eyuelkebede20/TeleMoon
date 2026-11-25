@@ -1,7 +1,4 @@
-import path from "node:path";
-import fs from "node:fs";
-import { db, q, now } from "./db.js";
-import { cfg } from "./config.js";
+import { now, Blob, Chunk, Node, FileVersion } from "./db.js";
 import { deleteMessages } from "./telegram.js";
 import { startKeepAlive } from "./keepalive.js";
 
@@ -13,46 +10,41 @@ export async function runBlobGC({ dryRun = false, graceDays = 30 } = {}) {
   const graceMs = graceDays * 24 * 60 * 60 * 1000;
   const cutoff = now() - graceMs;
 
-  // Step 1: Mark newly unreferenced blobs with unreferenced_at = now()
-  const unrefBlobs = q(`
-    SELECT b.id, b.unreferenced_at
-    FROM blobs b
-    WHERE b.id NOT IN (SELECT blob_id FROM nodes WHERE blob_id IS NOT NULL AND deleted_at IS NULL)
-      AND b.id NOT IN (SELECT blob_id FROM file_versions WHERE blob_id IS NOT NULL)
-  `).all();
+  // Step 1: Find blob ids that are referenced by live nodes or file_versions
+  const referencedByNodes = await Node.distinct("blob_id", { blob_id: { $ne: null }, deleted_at: null });
+  const referencedByVersions = await FileVersion.distinct("blob_id", { blob_id: { $ne: null } });
+  const referencedSet = new Set([...referencedByNodes, ...referencedByVersions]);
+
+  // Step 2: Get all blobs
+  const allBlobs = await Blob.find({}, { id: 1, unreferenced_at: 1 }).lean();
 
   let newlyMarked = 0;
-  for (const b of unrefBlobs) {
-    if (!b.unreferenced_at) {
+  const reRefIds = [];
+
+  for (const b of allBlobs) {
+    const isReferenced = referencedSet.has(b.id);
+    if (!isReferenced && !b.unreferenced_at) {
+      // Mark newly unreferenced
       if (!dryRun) {
-        q(`UPDATE blobs SET unreferenced_at = ? WHERE id = ?`).run(now(), b.id);
+        await Blob.updateOne({ id: b.id }, { $set: { unreferenced_at: now() } });
       }
       newlyMarked++;
+    } else if (isReferenced && b.unreferenced_at) {
+      // Clear unreferenced_at for blobs that became referenced again
+      reRefIds.push(b.id);
     }
   }
 
-  // Step 2: Clear unreferenced_at for blobs that became referenced again
-  const reRefBlobs = q(`
-    SELECT b.id
-    FROM blobs b
-    WHERE b.unreferenced_at IS NOT NULL
-      AND (
-        b.id IN (SELECT blob_id FROM nodes WHERE blob_id IS NOT NULL AND deleted_at IS NULL)
-        OR b.id IN (SELECT blob_id FROM file_versions WHERE blob_id IS NOT NULL)
-      )
-  `).all();
-
-  for (const b of reRefBlobs) {
-    if (!dryRun) {
-      q(`UPDATE blobs SET unreferenced_at = NULL WHERE id = ?`).run(b.id);
-    }
+  if (!dryRun && reRefIds.length > 0) {
+    await Blob.updateMany({ id: { $in: reRefIds } }, { $set: { unreferenced_at: null } });
   }
 
   // Step 3: Find eligible blobs older than grace period
-  const eligibleBlobs = q(`
-    SELECT id FROM blobs
-    WHERE unreferenced_at IS NOT NULL AND unreferenced_at < ?
-  `).all(cutoff);
+  const eligibleBlobs = await Blob.find({
+    unreferenced_at: { $ne: null, $lt: cutoff },
+  }, { id: 1 }).lean();
+
+  const unrefBlobs = allBlobs.filter((b) => !referencedSet.has(b.id));
 
   if (dryRun) {
     console.log(`[gc:dryRun] unreferenced: ${unrefBlobs.length}, newlyMarked: ${newlyMarked}, eligibleToDelete: ${eligibleBlobs.length}`);
@@ -63,28 +55,18 @@ export async function runBlobGC({ dryRun = false, graceDays = 30 } = {}) {
   let deletedMsgsCount = 0;
 
   for (const b of eligibleBlobs) {
-    // Re-verify inside a transaction
-    let msgIdsToDelete = [];
-    const tx = db.transaction(() => {
-      const isReferenced = q(`
-        SELECT 1 FROM (
-          SELECT blob_id FROM nodes WHERE blob_id = ? AND deleted_at IS NULL
-          UNION ALL
-          SELECT blob_id FROM file_versions WHERE blob_id = ?
-        ) LIMIT 1
-      `).get(b.id, b.id);
+    // Re-verify blob is still unreferenced
+    const stillReferencedByNode = await Node.findOne({ blob_id: b.id, deleted_at: null }, { _id: 1 }).lean();
+    const stillReferencedByVersion = stillReferencedByNode ? null : await FileVersion.findOne({ blob_id: b.id }, { _id: 1 }).lean();
 
-      if (isReferenced) return; // rescued
+    if (stillReferencedByNode || stillReferencedByVersion) continue; // rescued
 
-      const chunkRows = q(`SELECT msg_id FROM chunks WHERE blob_id = ?`).all(b.id);
-      msgIdsToDelete = chunkRows.map((r) => r.msg_id);
+    const chunkRows = await Chunk.find({ blob_id: b.id }, { msg_id: 1 }).lean();
+    const msgIdsToDelete = chunkRows.map((r) => r.msg_id);
 
-      q(`DELETE FROM chunks WHERE blob_id = ?`).run(b.id);
-      q(`DELETE FROM blobs WHERE id = ?`).run(b.id);
-      deletedBlobsCount++;
-    });
-
-    tx();
+    await Chunk.deleteMany({ blob_id: b.id });
+    await Blob.deleteOne({ id: b.id });
+    deletedBlobsCount++;
 
     if (msgIdsToDelete.length > 0) {
       deletedMsgsCount += msgIdsToDelete.length;
@@ -101,33 +83,11 @@ export async function runBlobGC({ dryRun = false, graceDays = 30 } = {}) {
 }
 
 /**
- * Creates a consistent SQLite backup using VACUUM INTO.
+ * MongoDB backup is managed by Atlas — no manual snapshot needed.
  */
 export async function createDBSnapshot() {
-  const snapshotDir = path.join(cfg.dataDir, "snapshots");
-  fs.mkdirSync(snapshotDir, { recursive: true });
-
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const destPath = path.join(snapshotDir, `telemoon_${timestamp}.db`);
-
-  try {
-    db.backup(destPath);
-    console.log(`[snapshot] created DB snapshot at ${destPath}`);
-
-    // Prune old snapshots, keep last 7
-    const files = fs.readdirSync(snapshotDir)
-      .filter((f) => f.startsWith("telemoon_") && f.endsWith(".db"))
-      .sort();
-    if (files.length > 7) {
-      for (const f of files.slice(0, files.length - 7)) {
-        fs.unlinkSync(path.join(snapshotDir, f));
-      }
-    }
-    return destPath;
-  } catch (err) {
-    console.error(`[snapshot error]`, err.message);
-    throw err;
-  }
+  console.log("[snapshot] MongoDB backup is managed by Atlas. No manual snapshot required.");
+  return null;
 }
 
 /**
@@ -142,7 +102,7 @@ export function startBackgroundJobs() {
     runBlobGC().catch((e) => console.error("[gc scheduled error]", e.message));
   }, 24 * 60 * 60 * 1000);
 
-  // Run DB snapshot daily
+  // Run DB snapshot daily (no-op for MongoDB Atlas)
   setInterval(() => {
     createDBSnapshot().catch((e) => console.error("[snapshot scheduled error]", e.message));
   }, 24 * 60 * 60 * 1000);

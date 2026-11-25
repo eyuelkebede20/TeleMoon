@@ -13,6 +13,7 @@ export const cfg = {
   port: num(process.env.PORT, 8080),
   dataDir: process.env.DATA_DIR || "./data",
   jwtSecret: process.env.JWT_SECRET || "dev-secret-change-me",
+  mongoUri: process.env.MONGODB_URI || "",
 
   // Telegram
   apiId: num(process.env.TG_API_ID, 0),

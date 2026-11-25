@@ -1,7 +1,7 @@
 import assert from "node:assert";
 import bcrypt from "bcryptjs";
 import {
-  db, createFolderNode, createFileNode, updateNode, trashNode,
+  connectDB, db, createFolderNode, createFileNode, updateNode, trashNode,
   restoreNode, getDelta, getSnapshot, findVerifiedBlob,
   createDropLink, getDropLinkByCode, getDropLinkById,
   updateDropLink, deleteDropLink,
@@ -12,10 +12,12 @@ import {
 
 console.log("Running server sync engine tests...");
 
+await connectDB();
+
 const userId = "test-user-" + Date.now();
 
 // 1. Create Folder
-const folder1 = createFolderNode({
+const folder1 = await createFolderNode({
   parentId: "root",
   name: "Documents",
   ownerId: userId,
@@ -26,7 +28,7 @@ assert.equal(folder1.node.version, 1, "Folder version starts at 1");
 assert.ok(folder1.cursor > 0, "Folder cursor assigned");
 
 // 2. Create File
-const file1 = createFileNode({
+const file1 = await createFileNode({
   parentId: folder1.node.id,
   name: "Report.txt",
   size: 1024,
@@ -43,7 +45,7 @@ assert.equal(file1.node.size, 1024);
 assert.ok(file1.cursor > folder1.cursor, "File cursor monotonically increases");
 
 // 3. Test Delta Feed
-const delta1 = getDelta({ userId, cursor: 0, limit: 10 });
+const delta1 = await getDelta({ userId, cursor: 0, limit: 10 });
 assert.ok(delta1.changes.length >= 2, "Delta contains at least folder and file");
 const deltaFile = delta1.changes.find((c) => c.nodeId === file1.node.id);
 assert.ok(deltaFile, "Delta includes file");
@@ -51,10 +53,10 @@ assert.equal(deltaFile.action, "CREATE");
 assert.equal(deltaFile.version, 1);
 
 // 4. Test Deduplication
-const verifiedBlob = findVerifiedBlob(userId, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", 1024);
+const verifiedBlob = await findVerifiedBlob(userId, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855", 1024);
 assert.ok(verifiedBlob, "Blob was indexed and verified");
 
-const dedupFile = createFileNode({
+const dedupFile = await createFileNode({
   parentId: folder1.node.id,
   name: "Report_Copy.txt",
   size: 1024,
@@ -67,7 +69,7 @@ const dedupFile = createFileNode({
 assert.equal(dedupFile.node.blob_id, verifiedBlob.id, "Deduplication reused existing blob!");
 
 // 5. Test Update with Optimistic Locking
-const updatedFile = updateNode({
+const updatedFile = await updateNode({
   id: file1.node.id,
   name: "Report_Renamed.txt",
   ownerId: userId,
@@ -78,8 +80,8 @@ assert.equal(updatedFile.node.name, "Report_Renamed.txt");
 assert.equal(updatedFile.node.version, 2, "Version bumped on update");
 
 // Test Version Conflict
-assert.throws(() => {
-  updateNode({
+await assert.rejects(async () => {
+  await updateNode({
     id: file1.node.id,
     name: "Report_Stale.txt",
     ownerId: userId,
@@ -89,22 +91,22 @@ assert.throws(() => {
 }, (err) => err.code === "VERSION_CONFLICT", "Throws VERSION_CONFLICT on stale update");
 
 // 6. Test Soft Delete
-const trashed = trashNode(file1.node.id, userId, "test-dev-1", 2);
+const trashed = await trashNode(file1.node.id, userId, "test-dev-1", 2);
 assert.ok(trashed.ok, "File soft-deleted");
 
-const deltaAfterTrash = getDelta({ userId, cursor: updatedFile.cursor, limit: 10 });
+const deltaAfterTrash = await getDelta({ userId, cursor: updatedFile.cursor, limit: 10 });
 const trashChange = deltaAfterTrash.changes.find((c) => c.nodeId === file1.node.id);
 assert.ok(trashChange, "Trash emitted in delta");
 assert.equal(trashChange.action, "DELETE");
 assert.equal(trashChange.deleted, true);
 
 // 7. Test Restore
-const restored = restoreNode(file1.node.id, userId, "test-dev-1");
+const restored = await restoreNode(file1.node.id, userId, "test-dev-1");
 assert.equal(restored.node.deleted_at, null, "File restored");
 assert.equal(restored.node.version, 3, "Version bumped on restore");
 
 // 8. Test Drop Links (Send a Link)
-const drop1 = createDropLink({
+const drop1 = await createDropLink({
   folderId: folder1.node.id,
   ownerId: userId,
   title: "Client Drop",
@@ -115,13 +117,13 @@ assert.equal(drop1.folder_id, folder1.node.id);
 assert.equal(drop1.owner_id, userId);
 
 // Query by code
-const foundDrop = getDropLinkByCode(drop1.code);
+const foundDrop = await getDropLinkByCode(drop1.code);
 assert.ok(foundDrop, "Drop link found by 4-digit code");
 assert.equal(foundDrop.id, drop1.id);
 
 // Custom slug & Password PIN
 const customSlug = "qq-" + Date.now();
-const drop2 = createDropLink({
+const drop2 = await createDropLink({
   folderId: folder1.node.id,
   ownerId: userId,
   code: customSlug,
@@ -133,17 +135,17 @@ assert.ok(drop2.password_hash, "Password hash generated");
 assert.ok(bcrypt.compareSync("1234", drop2.password_hash), "Password matches hash");
 
 // Update drop link
-const updatedDrop = updateDropLink(drop2.id, userId, {
+const updatedDrop = await updateDropLink(drop2.id, userId, {
   title: "Updated Title",
   is_active: 0,
 });
 assert.equal(updatedDrop.title, "Updated Title");
-assert.equal(updatedDrop.is_active, 0, "Deactivated drop link");
+assert.equal(updatedDrop.is_active, false, "Deactivated drop link");
 
 // Delete drop link
-const delRes = deleteDropLink(drop1.id, userId);
+const delRes = await deleteDropLink(drop1.id, userId);
 assert.equal(delRes.ok, true, "Deleted drop link");
-assert.equal(getDropLinkById(drop1.id), undefined);
+assert.equal(await getDropLinkById(drop1.id), null);
 
 // 9. Test Keep-Alive / Auto-Ping Engine
 learnPublicUrl("http://localhost:3000"); // should be ignored
@@ -161,3 +163,4 @@ assert.equal(kaUpdated.enabled, true);
 stopKeepAlive();
 
 console.log("All server sync engine, drop link & keep-alive tests PASSED successfully!");
+process.exit(0);

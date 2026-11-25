@@ -8,7 +8,7 @@ import bigInt from "big-integer";
 import { cfg } from "./config.js";
 import {
   ensureInboxFolder, createFileNode, getSetting, setSetting, getIndexedMessageIds,
-  saveTgEntity, getTgEntity, q,
+  saveTgEntity, getTgEntity, User, Node,
 } from "./db.js";
 import { emitSyncChange } from "./sync.js";
 
@@ -58,7 +58,7 @@ export async function initTelegram() {
   client.addEventHandler(onChannelPost, new NewMessage({}));
 
   // Channel: DB setting (linked from the UI) wins; TG_CHANNEL_ID is a seed.
-  const saved = getSetting("channel") || cfg.channel;
+  const saved = (await getSetting("channel")) || cfg.channel;
   if (!saved) {
     tg.error = "no storage linked yet — paste a channel link in the app";
     console.log(`[tg] ${tg.error}`);
@@ -91,9 +91,9 @@ export async function setChannel(refOrEntity) {
   tg.error = null;
   const isChannel = ent.className === "Channel";
   const formattedId = isChannel ? `-100${ent.id.toString()}` : `-${ent.id.toString()}`;
-  setSetting("channel", formattedId);
+  await setSetting("channel", formattedId);
   try {
-    saveTgEntity({
+    await saveTgEntity({
       id: ent.id.toString(),
       accessHash: ent.accessHash?.toString?.() || null,
       title: ent.title || null,
@@ -226,7 +226,7 @@ export async function resolvePeer(refOrEntity) {
   if (typeof refOrEntity === "object" && refOrEntity.className) {
     if (refOrEntity.id && (refOrEntity.className === "Channel" || refOrEntity.className === "Chat")) {
       try {
-        saveTgEntity({
+        await saveTgEntity({
           id: refOrEntity.id.toString(),
           accessHash: refOrEntity.accessHash?.toString?.() || null,
           title: refOrEntity.title || null,
@@ -261,9 +261,9 @@ export async function resolvePeer(refOrEntity) {
     }
   }
 
-  // Check persistent SQLite database for entity access_hash
+  // Check persistent database for entity access_hash
   try {
-    const savedEntity = getTgEntity(cleanR) || getTgEntity(r);
+    const savedEntity = (await getTgEntity(cleanR)) || (await getTgEntity(r));
     if (savedEntity) {
       if (savedEntity.class_name === "Channel" && savedEntity.access_hash) {
         return new Api.InputPeerChannel({
@@ -277,7 +277,7 @@ export async function resolvePeer(refOrEntity) {
       }
     }
   } catch (dbErr) {
-    console.warn("[tg] SQLite entity lookup warning:", dbErr.message);
+    console.warn("[tg] entity lookup warning:", dbErr.message);
   }
 
   let targetId = r;
@@ -293,7 +293,7 @@ export async function resolvePeer(refOrEntity) {
     const ent = await tg.client.getEntity(/^-?\d+$/.test(targetId) ? bigInt(targetId) : targetId.startsWith("@") ? targetId : `@${targetId}`);
     if (ent && ent.id) {
       try {
-        saveTgEntity({
+        await saveTgEntity({
           id: ent.id.toString(),
           accessHash: ent.accessHash?.toString?.() || null,
           title: ent.title || null,
@@ -317,7 +317,7 @@ export async function resolvePeer(refOrEntity) {
         });
         if (found?.entity) {
           try {
-            saveTgEntity({
+            await saveTgEntity({
               id: found.entity.id.toString(),
               accessHash: found.entity.accessHash?.toString?.() || null,
               title: found.entity.title || null,
@@ -365,25 +365,27 @@ export async function syncChannelHistory({ peerRef, ownerId, targetParentId = "r
 
   // Elevate any previously imported files sitting inside "Telegram Inbox" directly to 'root'
   try {
-    q(`
-      UPDATE nodes
-      SET parent_id = ?
-      WHERE parent_id IN (
-        SELECT id FROM nodes WHERE name = 'Telegram Inbox' AND type = 'folder'
-      )
-      AND (owner_id = ? OR owner_id IS NULL)
-    `).run(targetParentId || "root", ownerId || null);
+    const inbox = await Node.findOne({ name: "Telegram Inbox", type: "folder", deleted_at: null }).lean();
+    if (inbox) {
+      await Node.updateMany(
+        {
+          parent_id: inbox.id,
+          $or: [{ owner_id: ownerId || null }, { owner_id: null }],
+        },
+        { $set: { parent_id: targetParentId || "root" } }
+      );
+    }
   } catch (e) {
     console.warn("[tg] Elevate Inbox files warning:", e.message);
   }
 
-  const existingMsgIds = getIndexedMessageIds(ownerId);
+  const existingMsgIds = await getIndexedMessageIds(ownerId);
 
   let scanned = 0;
   let imported = 0;
   let skipped = 0;
 
-  const processMessage = (m) => {
+  const processMessage = async (m) => {
     if (!m) return false;
     scanned++;
 
@@ -446,7 +448,7 @@ export async function syncChannelHistory({ peerRef, ownerId, targetParentId = "r
     name = String(name || `telegram_${m.id}`).replace(/[/\\]/g, "-").trim() || `telegram_${m.id}`;
     if (!size || isNaN(size)) return false;
 
-    createFileNode({
+    await createFileNode({
       parentId: targetParentId || "root",
       name,
       size,
@@ -463,7 +465,7 @@ export async function syncChannelHistory({ peerRef, ownerId, targetParentId = "r
   let iterSuccess = false;
   try {
     for await (const m of tg.client.iterMessages(entity, { limit })) {
-      processMessage(m);
+      await processMessage(m);
     }
     iterSuccess = true;
   } catch (iterErr) {
@@ -499,7 +501,7 @@ export async function syncChannelHistory({ peerRef, ownerId, targetParentId = "r
         try {
           const msgs = await tg.client.getMessages(entity, { ids: batchIds });
           for (const m of msgs) {
-            if (m && m.id) processMessage(m);
+            if (m && m.id) await processMessage(m);
           }
         } catch (batchErr) {
           console.warn("[tg] batch getMessages warning:", batchErr.message);
@@ -530,7 +532,7 @@ export async function syncChannelHistory({ peerRef, ownerId, targetParentId = "r
   };
 }
 
-function onChannelPost(ev) {
+async function onChannelPost(ev) {
   try {
     const m = ev.message;
     const cid = m?.peerId?.channelId || m?.peerId?.chatId;
@@ -538,7 +540,7 @@ function onChannelPost(ev) {
 
     if (ev.chat) {
       try {
-        saveTgEntity({
+        await saveTgEntity({
           id: ev.chat.id?.toString(),
           accessHash: ev.chat.accessHash?.toString?.() || null,
           title: ev.chat.title || null,
@@ -557,9 +559,14 @@ function onChannelPost(ev) {
       if (cleanCid === activeClean) matched = true;
     }
 
-    const user = q(
-      `SELECT id FROM users WHERE channel_id = ? OR channel_id = ? OR channel_id = ? OR channel_id LIKE ?`
-    ).get(`-100${cleanCid}`, `-${cleanCid}`, cleanCid, `%${cleanCid}%`);
+    const user = await User.findOne({
+      $or: [
+        { channel_id: `-100${cleanCid}` },
+        { channel_id: `-${cleanCid}` },
+        { channel_id: cleanCid },
+        { channel_id: new RegExp(cleanCid) },
+      ],
+    }).lean();
 
     if (!matched && !user) {
       console.log(`[setup] channel post from unlinked channel id: -100${cid}`);
@@ -611,7 +618,7 @@ function onChannelPost(ev) {
     if (!size || isNaN(size)) return;
 
     const ownerId = user ? user.id : null;
-    const node = createFileNode({
+    const { node } = await createFileNode({
       parentId: "root",
       name,
       size,
@@ -619,7 +626,7 @@ function onChannelPost(ev) {
       ownerId,
       parts: [{ msg_id: m.id, size }],
     });
-    console.log(`[indexer] +${node.name} (${size} B) from post ${m.id} -> root (owner: ${ownerId || "system"})`);
+    console.log(`[indexer] +${node?.name || name} (${size} B) from post ${m.id} -> root (owner: ${ownerId || "system"})`);
     if (ownerId) {
       emitSyncChange(ownerId, 0);
     }

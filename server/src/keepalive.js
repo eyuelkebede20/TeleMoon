@@ -47,7 +47,7 @@ export function learnPublicUrl(rawUrl) {
   if (state.targetUrl !== normalized) {
     state.targetUrl = normalized;
     try {
-      setSetting("public_url", normalized);
+      setSetting("public_url", normalized).catch(() => {});
       console.log(`[keep-alive] learned public URL from request: ${normalized}`);
     } catch (_) {}
   }
@@ -64,11 +64,13 @@ export async function triggerPing() {
   // Determine target URL
   let target = state.targetUrl;
   if (!target) {
-    const saved = getSetting("public_url");
-    if (saved) {
-      target = normalizePingUrl(saved);
-      state.targetUrl = target;
-    }
+    try {
+      const saved = await getSetting("public_url");
+      if (saved) {
+        target = normalizePingUrl(saved);
+        state.targetUrl = target;
+      }
+    } catch (_) {}
   }
 
   // Fallback to local server if no external URL is known yet
@@ -115,7 +117,7 @@ export async function triggerPing() {
 export function getKeepAliveStatus() {
   return {
     enabled: state.enabled,
-    targetUrl: state.targetUrl || getSetting("public_url") || null,
+    targetUrl: state.targetUrl || null,
     intervalMin: state.intervalMin,
     lastPingAt: state.lastPingAt,
     lastStatus: state.lastStatus,
@@ -142,11 +144,11 @@ export function updateKeepAliveConfig({ url, enabled, intervalMin }) {
       const normalized = normalizePingUrl(url);
       state.targetUrl = normalized;
       state.isCustomUrl = true;
-      setSetting("public_url", normalized);
+      setSetting("public_url", normalized).catch(() => {});
     } else {
       state.targetUrl = "";
       state.isCustomUrl = false;
-      setSetting("public_url", "");
+      setSetting("public_url", "").catch(() => {});
     }
   }
   return getKeepAliveStatus();
@@ -176,13 +178,15 @@ export function stopKeepAlive() {
 /**
  * Initialize the keep-alive background worker.
  */
-export function startKeepAlive() {
+export async function startKeepAlive() {
   // Load saved setting if no env override
   if (!state.targetUrl) {
-    const saved = getSetting("public_url");
-    if (saved) {
-      state.targetUrl = normalizePingUrl(saved);
-    }
+    try {
+      const saved = await getSetting("public_url");
+      if (saved) {
+        state.targetUrl = normalizePingUrl(saved);
+      }
+    } catch (_) {}
   }
 
   restartTimer();

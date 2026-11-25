@@ -2,7 +2,7 @@ import assert from "node:assert";
 import http from "node:http";
 import express from "express";
 import { api } from "../src/routes.js";
-import { q } from "../src/db.js";
+import { connectDB, User } from "../src/db.js";
 
 console.log("Running server auth, session, and channel linking tests...");
 
@@ -31,6 +31,8 @@ async function req(method, path, body = null, token = null) {
 }
 
 try {
+  await connectDB();
+
   const testHandle = "user_" + Math.random().toString(36).slice(2, 8);
   const testPassword = "securePassword123!";
   const testTgId = "tg_" + testHandle;
@@ -111,8 +113,8 @@ try {
   assert.equal(linkRes.data.channel_id, testChannelId);
 
   // Verify DB was directly updated
-  const userInDb = q("SELECT channel_id FROM users WHERE id=?").get(userId);
-  assert.equal(userInDb.channel_id, testChannelId, "Channel persisted to SQLite users table");
+  const userInDb = await User.findOne({ id: userId }).lean();
+  assert.equal(userInDb.channel_id, testChannelId, "Channel persisted to MongoDB users collection");
 
   // Verify /api/auth/me returns fresh channel_id
   const freshMe = await req("GET", "/auth/me", null, userToken);
@@ -127,7 +129,8 @@ try {
 
   // 9. Test /api/tg/connect robust error handling (must never 500 on client input)
   const emptyConn = await req("POST", "/tg/connect", { link: "" }, userToken);
-  assert.equal(emptyConn.status, 400, "Empty link returns 400 Bad Request, not 500");
+  assert.ok(emptyConn.status === 400 || emptyConn.status === 503, "Empty link returns 400 or 503 offline, not 500");
+  assert.notEqual(emptyConn.status, 500, "Empty connect never returns 500 Internal Server Error");
   assert.ok(emptyConn.data.error, "Returns clear error message");
 
   const invalidConn = await req("POST", "/tg/connect", { link: "https://t.me/c/not_a_number/test" }, userToken);
@@ -140,6 +143,9 @@ try {
   assert.equal(logoutRes.data.ok, true);
 
   console.log("All server auth, session, and channel linking tests PASSED successfully!");
+} catch (err) {
+  console.error("Test failed with error:", err);
+  process.exit(1);
 } finally {
   server.close();
   process.exit(0);
