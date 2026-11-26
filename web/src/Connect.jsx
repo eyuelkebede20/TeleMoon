@@ -12,9 +12,6 @@ export default function Connect({ status, user, canSkip, onDone, onLogout, onUse
   const [err, setErr] = useState("");
   const [dialogs, setDialogs] = useState(null);
   const [dlgErr, setDlgErr] = useState("");
-  const [syncPrompt, setSyncPrompt] = useState(null);
-  const [syncing, setSyncing] = useState(false);
-  const [syncResult, setSyncResult] = useState(null);
   const offline = !status.mode; // no Telegram client at all
 
   useEffect(() => {
@@ -29,14 +26,21 @@ export default function Connect({ status, user, canSkip, onDone, onLogout, onUse
     try {
       let channelId = ref;
       let title = titleHint || ref;
+      const cMatch = typeof ref === "string" && ref.match(/(?:t\.me\/|telegram\.me\/)c\/(\d+)/i);
+      const extractedId = cMatch ? `-100${cMatch[1]}` : null;
+
       try {
         const res = await api.connect(ref);
         channelId = res.id || channelId;
         title = res.title || title;
       } catch (connErr) {
-        if (typeof ref === "string" && /^-?\d+$/.test(ref.trim())) {
-          const res = await api.saveChannel(ref);
-          if (res?.channel_id) channelId = res.channel_id;
+        const targetId = extractedId || (typeof ref === "string" && /^-?\d+$/.test(ref.trim()) ? ref.trim() : null);
+        if (targetId) {
+          const res = await api.saveChannel(targetId);
+          if (res?.channel_id) {
+            channelId = res.channel_id;
+            title = res.title || title || `Group (${channelId})`;
+          }
         } else {
           throw connErr;
         }
@@ -47,34 +51,10 @@ export default function Connect({ status, user, canSkip, onDone, onLogout, onUse
       const updatedUser = { ...u, channel_id: channelId };
       savedUser.set(updatedUser);
       onUserUpdate?.(updatedUser);
-      
-      setSyncPrompt({ channelId, title });
+      onDone?.();
     }
     catch (e) { setErr(e.message); }
     finally { setBusy(false); }
-  }
-
-  function finishConnect() {
-    if (syncPrompt?.channelId) {
-      const u = savedUser.get() || user;
-      const updatedUser = { ...u, channel_id: syncPrompt.channelId };
-      savedUser.set(updatedUser);
-      onUserUpdate?.(updatedUser);
-    }
-    onDone?.();
-  }
-
-  async function runSync() {
-    setSyncing(true);
-    setErr("");
-    try {
-      const res = await api.syncTelegram(1000, syncPrompt?.channelId);
-      setSyncResult(res);
-    } catch (e) {
-      setErr("Sync failed: " + e.message);
-    } finally {
-      setSyncing(false);
-    }
   }
 
   return (
@@ -91,7 +71,7 @@ export default function Connect({ status, user, canSkip, onDone, onLogout, onUse
           >
             {theme === "light" ? <MoonIcon /> : <SunIcon />}
           </button>
-          {canSkip && <button className="ghost" onClick={finishConnect}>Back to drive</button>}
+          {canSkip && <button className="ghost" onClick={onDone}>Back to drive</button>}
           <button className="ghost" onClick={onLogout}>Sign out</button>
         </div>
       </div>
@@ -164,46 +144,6 @@ export default function Connect({ status, user, canSkip, onDone, onLogout, onUse
             </div>
           )}
         </section>
-      )}
-
-      {syncPrompt && (
-        <div className="modal">
-          <div className="modal-card" style={{ maxWidth: 440, minHeight: 'auto' }}>
-            <header>
-              <span className="upname">Group Linked</span>
-            </header>
-            <div className="modal-body" style={{ minHeight: 'auto', padding: "24px 20px", display: "block" }}>
-              <p style={{ margin: "0 0 16px", fontSize: "0.95rem", lineHeight: 1.5 }}>
-                Successfully linked to <b>{syncPrompt.title}</b>!
-                <br /><br />
-                Would you like to import all existing files from this chat directly to your TeleMoon drive?
-              </p>
-              {syncing && <p className="dim" style={{ fontSize: "0.9rem" }}>Scanning messages and indexing files…</p>}
-              {syncResult && (
-                <p style={{ color: "var(--moon)", fontSize: "0.9rem", lineHeight: 1.4 }}>
-                  ✓ Imported {syncResult.imported} file(s) directly to your drive! ({syncResult.scanned} messages scanned)
-                </p>
-              )}
-              {err && <p className="auth-err" style={{ marginTop: 8 }}>{err}</p>}
-              <div style={{ display: "flex", gap: "8px", justifyContent: "flex-end", marginTop: "20px" }}>
-                {syncResult ? (
-                  <button type="button" className="btn btn-moon" onClick={finishConnect}>
-                    Go to Drive
-                  </button>
-                ) : (
-                  <>
-                    <button type="button" className="btn" disabled={syncing} onClick={finishConnect}>
-                      Skip for now
-                    </button>
-                    <button type="button" className="btn btn-moon" disabled={syncing} onClick={runSync}>
-                      {syncing ? "Scanning…" : "Import All Files"}
-                    </button>
-                  </>
-                )}
-              </div>
-            </div>
-          </div>
-        </div>
       )}
     </div>
   );

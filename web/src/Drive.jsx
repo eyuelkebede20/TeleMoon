@@ -184,7 +184,6 @@ export default function Drive({ user, onLogout, onStorage, onOpenDrop }) {
   const [error, setError] = useState("");
   const [q, setQ] = useState("");
   const [searching, setSearching] = useState(false);
-  const [syncing, setSyncing] = useState(false);
   const [organizing, setOrganizing] = useState(false);
   const [toastMessage, setToastMessage] = useState("");
   const [trackedIds, setTrackedIds] = useState(() => {
@@ -363,21 +362,6 @@ export default function Drive({ user, onLogout, onStorage, onOpenDrop }) {
     } catch (e) { setModal({ type: "error", error: e.message }); }
   }
 
-  async function handleSyncTelegram() {
-    setSyncing(true);
-    try {
-      const res = await api.syncTelegram(1000, user?.channel_id || status?.channel);
-      setToastMessage(
-        `✓ Telegram sync complete: imported ${res.imported} file(s) into your drive (${res.scanned} messages scanned).`
-      );
-      refresh();
-    } catch (e) {
-      setToastMessage(`Sync failed: ${e.message}`);
-    } finally {
-      setSyncing(false);
-    }
-  }
-
   async function handleAutoOrganize() {
     setOrganizing(true);
     try {
@@ -495,9 +479,6 @@ export default function Drive({ user, onLogout, onStorage, onOpenDrop }) {
         <div className="top-actions">
           <button className="btn" onClick={() => share(cwd)} title="Create or manage drop upload link to receive files">
             <SendIcon /> Upload Link
-          </button>
-          <button className="btn" onClick={handleSyncTelegram} disabled={syncing} title="Sync files from Telegram chat history">
-            <SyncIcon className={syncing ? "spin" : ""} /> {syncing ? "Syncing…" : "Sync Telegram"}
           </button>
           <button className="btn" onClick={mkdir}><PlusIcon /> New folder</button>
           <button className="btn" onClick={() => folderInput.current.click()}>

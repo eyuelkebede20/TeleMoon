@@ -78,7 +78,26 @@ export async function setChannel(refOrEntity) {
   if (!tg.client) throw err("Telegram offline", 503);
   let ent = refOrEntity;
   if (typeof ent !== "object" || !ent?.className) {
-    ent = await resolvePeer(ent);
+    try {
+      ent = await resolvePeer(ent);
+    } catch (resolveErr) {
+      // If Telegram API cannot resolve the peer immediately (e.g. access_hash needed or private),
+      // synthesize a lightweight channel record using the ID so linking succeeds and persists.
+      const rawStr = String(refOrEntity).trim();
+      const cMatch = rawStr.match(/(?:t\.me\/|telegram\.me\/)c\/(\d+)/i);
+      const cleanId = cMatch ? cMatch[1] : rawStr.replace(/^-100/, "").replace(/^-/, "");
+      if (/^\d+$/.test(cleanId)) {
+        const formattedId = `-100${cleanId}`;
+        await setSetting("channel", formattedId);
+        await saveTgEntity({
+          id: cleanId,
+          title: `Group (${formattedId})`,
+          className: "Channel",
+        });
+        return { id: formattedId, title: `Group (${formattedId})` };
+      }
+      throw resolveErr;
+    }
   }
   if (!ent || (ent.className !== "Channel" && ent.className !== "Chat")) {
     if (ent?.className?.includes("Forbidden")) {
@@ -306,14 +325,22 @@ export async function resolvePeer(refOrEntity) {
   } catch (err1) {
     if (tg.mode !== "bot") {
       try {
-        const dialogs = await tg.client.getDialogs({ limit: 150 });
+        const dialogs = await tg.client.getDialogs({});
         const cleanT = targetId.replace(/^-100/, "").replace(/^-/, "");
         const found = dialogs.find((d) => {
           if (!d.entity) return false;
           const eid = d.entity.id?.toString();
+          const did = d.id?.toString();
           const uname = d.entity.username?.toLowerCase();
           const matchUname = targetId.startsWith("@") ? targetId.slice(1).toLowerCase() : targetId.toLowerCase();
-          return eid === cleanT || (uname && uname === matchUname);
+          return (
+            eid === cleanT ||
+            did === cleanT ||
+            did === targetId ||
+            did === `-100${cleanT}` ||
+            did === `-${cleanT}` ||
+            (uname && uname === matchUname)
+          );
         });
         if (found?.entity) {
           try {
@@ -328,6 +355,21 @@ export async function resolvePeer(refOrEntity) {
           return found.entity;
         }
       } catch (_) {}
+    }
+
+    // Try getInputEntity as last direct Telegram lookup
+    try {
+      const inputPeer = await tg.client.getInputEntity(/^-?\d+$/.test(targetId) ? bigInt(targetId) : targetId);
+      if (inputPeer) return inputPeer;
+    } catch (_) {}
+
+    // Fallback: If we have a connected tg.channel, use it
+    if (tg.channel) return tg.channel;
+
+    // Fallback: If numeric ID, try constructing InputPeerChat as last resort
+    const fallbackClean = targetId.replace(/^-100/, "").replace(/^-/, "");
+    if (/^\d+$/.test(fallbackClean)) {
+      return new Api.InputPeerChat({ chatId: bigInt(fallbackClean) });
     }
 
     const msg = err1.errorMessage || err1.message || "";

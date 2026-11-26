@@ -47,6 +47,10 @@ async function getUserPeer(userId) {
     throw new Error("No Telegram channel connected");
   }
   let cid = String(u.channel_id).trim();
+  const cMatch = cid.match(/(?:t\.me\/|telegram\.me\/)c\/(\d+)/i);
+  if (cMatch) {
+    cid = `-100${cMatch[1]}`;
+  }
   if (!cid.startsWith("@") && !cid.startsWith("-100") && /^\d+$/.test(cid)) {
     cid = `-100${cid}`;
   }
@@ -242,20 +246,34 @@ api.post("/user/channel", auth, async (req, res) => {
     if (!channel_id) return bad(res, 400, "channel_id required");
     channel_id = String(channel_id).trim();
 
-    // If a link or username was passed, route through connectByLink for full validation
+    // Check if it's a t.me/c/ link: https://t.me/c/3836770302/35
+    const cMatch = channel_id.match(/(?:t\.me\/|telegram\.me\/)c\/(\d+)/i);
+    let extractedId = cMatch ? `-100${cMatch[1]}` : null;
+
+    let channel = null;
     if (channel_id.includes("t.me") || channel_id.includes("telegram.me") || channel_id.startsWith("@")) {
-      const channel = await connectByLink(channel_id);
-      if (channel?.id) {
-        await User.updateOne({ id: req.user.id }, { $set: { channel_id: channel.id } });
-        return res.json({ ok: true, channel_id: channel.id, title: channel.title });
+      try {
+        channel = await connectByLink(channel_id);
+      } catch (linkErr) {
+        if (!extractedId) throw linkErr;
       }
     }
 
+    if (channel?.id) {
+      let cid = String(channel.id).trim();
+      if (!cid.startsWith("@") && !cid.startsWith("-100") && /^\d+$/.test(cid)) {
+        cid = `-100${cid}`;
+      }
+      await User.updateOne({ id: req.user.id }, { $set: { channel_id: cid } });
+      return res.json({ ok: true, channel_id: cid, title: channel.title });
+    }
+
+    if (extractedId) channel_id = extractedId;
     if (/^\d{10,}$/.test(channel_id)) channel_id = `-100${channel_id}`;
     else if (/^\d{5,9}$/.test(channel_id)) channel_id = `-${channel_id}`;
 
     await User.updateOne({ id: req.user.id }, { $set: { channel_id } });
-    res.json({ ok: true, channel_id });
+    res.json({ ok: true, channel_id, title: `Group (${channel_id})` });
   } catch (e) {
     const code = e.status || (/offline/i.test(e.message) ? 503 : 400);
     bad(res, code, e.errorMessage || e.message);
@@ -264,7 +282,20 @@ api.post("/user/channel", auth, async (req, res) => {
 
 api.post("/tg/connect", auth, async (req, res) => {
   try {
-    const channel = await connectByLink(req.body?.link);
+    const rawLink = String(req.body?.link || "").trim();
+    if (!rawLink) return bad(res, 400, "link required");
+    let channel;
+    try {
+      channel = await connectByLink(rawLink);
+    } catch (connErr) {
+      const cMatch = rawLink.match(/(?:t\.me\/|telegram\.me\/)c\/(\d+)/i);
+      if (cMatch) {
+        channel = { id: `-100${cMatch[1]}`, title: `Group (-100${cMatch[1]})` };
+        await setSetting("channel", channel.id);
+      } else {
+        throw connErr;
+      }
+    }
     if (channel?.id) {
       let cid = String(channel.id).trim();
       if (!cid.startsWith("@") && !cid.startsWith("-100") && /^\d+$/.test(cid)) {
