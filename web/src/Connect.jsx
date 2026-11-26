@@ -24,28 +24,9 @@ export default function Connect({ status, user, canSkip, onDone, onLogout, onUse
   async function connect(ref, titleHint) {
     setBusy(true); setErr("");
     try {
-      let channelId = ref;
-      let title = titleHint || ref;
-      const cMatch = typeof ref === "string" && ref.match(/(?:t\.me\/|telegram\.me\/)c\/(\d+)/i);
-      const extractedId = cMatch ? `-100${cMatch[1]}` : null;
+      const res = await api.connect(ref);
+      const channelId = res?.id || ref;
 
-      try {
-        const res = await api.connect(ref);
-        channelId = res.id || channelId;
-        title = res.title || title;
-      } catch (connErr) {
-        const targetId = extractedId || (typeof ref === "string" && /^-?\d+$/.test(ref.trim()) ? ref.trim() : null);
-        if (targetId) {
-          const res = await api.saveChannel(targetId);
-          if (res?.channel_id) {
-            channelId = res.channel_id;
-            title = res.title || title || `Group (${channelId})`;
-          }
-        } else {
-          throw connErr;
-        }
-      }
-      
       // Update local storage and notify parent component so the UI knows they have a channel
       const u = savedUser.get() || user;
       const updatedUser = { ...u, channel_id: channelId };
@@ -99,7 +80,7 @@ export default function Connect({ status, user, canSkip, onDone, onLogout, onUse
             <input
               value={link}
               onChange={(e) => setLink(e.target.value)}
-              placeholder="https://t.me/+…  ·  @channel  ·  -100…"
+              placeholder="https://t.me/+…  ·  https://t.me/c/…  ·  @channel  ·  -100…"
               spellCheck={false} autoFocus
             />
             <button className="btn btn-moon" disabled={busy || !link.trim()}>

@@ -44,7 +44,6 @@ export const api = {
   completeUpload: (id) => j("POST", `/api/uploads/${id}/complete`),
   abortUpload: (id) => j("DELETE", `/api/uploads/${id}`),
   share: (id) => j("POST", `/api/nodes/${id}/share`),
-  syncTelegram: (limit = 1000, channelId = null) => j("POST", "/api/tg/sync", { limit, channelId }),
   autoOrganize: (folderId) => j("POST", `/api/folders/${folderId}/auto-organize`),
   folderTree: () => j("GET", "/api/folders/tree"),
   batchMove: (ids, targetParentId) => j("POST", "/api/nodes/move", { ids, targetParentId }),

@@ -7,24 +7,137 @@ import eventsMod from "telegram/events/index.js";
 import bigInt from "big-integer";
 import { cfg } from "./config.js";
 import {
-  ensureInboxFolder, createFileNode, getSetting, setSetting, getIndexedMessageIds,
-  saveTgEntity, getTgEntity, User, Node,
+  createFileNode, getSetting, setSetting,
+  saveTgEntity, getTgEntity, escapeRegex, User,
 } from "./db.js";
 import { emitSyncChange } from "./sync.js";
 
 const { TelegramClient, Api } = telegram;
 const { StringSession } = sessionsMod;
-const { NewMessage } = eventsMod;
+const { NewMessage, Raw } = eventsMod;
 
 export const tg = {
   client: null,
   channel: null, // resolved entity
   ready: false,
   mode: null, // "bot" | "user"
+  botUsername: null,
   error: null,
 };
 
 const err = (msg, status = 400) => Object.assign(new Error(msg), { status });
+
+// Per-client in-memory cache of verified full Channel / Chat entities
+const verifiedByClient = new WeakMap();
+function getVerifiedMap(client) {
+  if (!client) return null;
+  let map = verifiedByClient.get(client);
+  if (!map) {
+    map = new Map();
+    verifiedByClient.set(client, map);
+  }
+  return map;
+}
+
+function cacheVerified(client, ent) {
+  if (!client || !ent || !ent.id) return;
+  if (ent.className !== "Channel" && ent.className !== "Chat") return;
+  const map = getVerifiedMap(client);
+  const cleanId = ent.id.toString().replace(/^-100/, "").replace(/^-/, "");
+  map.set(cleanId, ent);
+  if (ent.username) map.set(`@${ent.username.toLowerCase()}`, ent);
+}
+
+async function persistEntity(ent) {
+  if (!ent || !ent.id) return;
+  if (ent.className !== "Channel" && ent.className !== "Chat") return;
+  if (ent.min) return; // Min entities carry restricted hashes unusable as InputPeer
+  try {
+    await saveTgEntity({
+      id: ent.id.toString(),
+      accessHash: ent.accessHash?.toString?.() || null,
+      title: ent.title || null,
+      username: ent.username || null,
+      className: ent.className,
+    });
+  } catch (e) {
+    console.warn("[tg] saveTgEntity:", e.message);
+  }
+}
+
+/**
+ * Parse any Telegram channel/group reference (t.me/c/<id>/<msg>, topic links,
+ * t.me/+invite, public links, @username, or bare/-100 numeric IDs) into a canonical form.
+ */
+export function normalizeChannelRef(input) {
+  const raw = String(input || "").trim();
+  if (!raw) return { type: "empty", raw: "", ref: "" };
+
+  // Invite links: https://t.me/+HASH, https://t.me/joinchat/HASH, tg://join?invite=HASH, or +HASH
+  const invite = raw.match(
+    /(?:(?:https?:\/\/)?(?:www\.)?(?:t\.me|telegram\.me|telegram\.dog)\/(?:joinchat\/|\+)|tg:\/\/join\?invite=|^(?:\+|joinchat\/))([A-Za-z0-9_-]{8,})/i
+  );
+  if (invite) {
+    return { type: "invite", hash: invite[1], ref: raw };
+  }
+
+  // Private channel/supergroup links (including topic links):
+  // https://t.me/c/3836770302/35, https://t.me/c/3836770302/12/35, tg://privatepost?channel=3836770302&post=35
+  const cMatch =
+    raw.match(/(?:t\.me|telegram\.me|telegram\.dog)\/c\/(\d+)(?:\/\d+)*(?:[/?#]|$)/i) ||
+    raw.match(/tg:\/\/privatepost\?[^#]*\bchannel=(\d+)/i);
+  if (cMatch) {
+    const cleanId = cMatch[1];
+    return { type: "id", cleanId, ref: `-100${cleanId}` };
+  }
+
+  // Telegram Web URLs ending in #-1001234567 or #-1234567
+  const webHashMatch = raw.match(/#(-?100\d+|-\d+)$/);
+  if (webHashMatch) {
+    const idStr = webHashMatch[1];
+    if (/^-?100\d+$/.test(idStr)) {
+      const formatted = idStr.startsWith("-") ? idStr : `-${idStr}`;
+      return { type: "id", cleanId: formatted.slice(4), ref: formatted };
+    }
+    return { type: "id", cleanId: idStr.slice(1), ref: idStr };
+  }
+
+  // Public channel/group links: https://t.me/username or https://t.me/s/username or https://t.me/username/123
+  const pubMatch = raw.match(
+    /(?:t\.me|telegram\.me|telegram\.dog)\/(?:s\/)?([A-Za-z]\w{3,})(?:\/\d+)?(?:[/?#]|$)/i
+  );
+  if (
+    pubMatch &&
+    !["joinchat", "c", "addstickers", "addemoji", "share", "iv", "proxy"].includes(pubMatch[1].toLowerCase())
+  ) {
+    return { type: "username", username: pubMatch[1], ref: `@${pubMatch[1]}` };
+  }
+
+  // Direct numeric IDs
+  if (/^-?100\d+$/.test(raw)) {
+    const formatted = raw.startsWith("-") ? raw : `-${raw}`;
+    return { type: "id", cleanId: formatted.slice(4), ref: formatted };
+  }
+  if (/^-\d+$/.test(raw)) {
+    return { type: "id", cleanId: raw.slice(1), ref: raw };
+  }
+  if (/^\d{10,}$/.test(raw)) {
+    return { type: "id", cleanId: raw, ref: `-100${raw}` };
+  }
+  if (/^\d{5,9}$/.test(raw)) {
+    return { type: "id", cleanId: raw, ref: `-${raw}` };
+  }
+
+  // Username: @name or clean username
+  if (raw.startsWith("@") && /^@[A-Za-z]\w{3,32}$/.test(raw)) {
+    return { type: "username", username: raw.slice(1), ref: raw };
+  }
+  if (/^[A-Za-z]\w{3,32}$/.test(raw)) {
+    return { type: "username", username: raw, ref: `@${raw}` };
+  }
+
+  return { type: "other", ref: raw };
+}
 
 export async function initTelegram() {
   if (!cfg.apiId || !cfg.apiHash || (!cfg.botToken && !cfg.session)) {
@@ -48,29 +161,68 @@ export async function initTelegram() {
     tg.mode = "user";
   }
   tg.client = client;
+
+  try {
+    const me = await client.getMe();
+    if (me?.username) tg.botUsername = me.username;
+  } catch (_) {}
+
   console.log(
-    `[tg] connected (${tg.mode}). Tip: set TG_SESSION to reuse this session:\n` +
+    `[tg] connected (${tg.mode}${tg.botUsername ? ` @${tg.botUsername}` : ""}). Tip: set TG_SESSION to reuse this session:\n` +
       `TG_SESSION=${client.session.save()}`
   );
+
+  // Persist entities seen in raw updates (covers service events such as adding the bot/account to a group)
+  client.addEventHandler((update) => {
+    if (update?._entities?.size) {
+      for (const ent of update._entities.values()) {
+        if (ent && (ent.className === "Channel" || ent.className === "Chat") && ent.id && !ent.min) {
+          cacheVerified(client, ent);
+          persistEntity(ent);
+        }
+      }
+    }
+  }, new Raw({}));
 
   // One handler covers both jobs: while no channel is linked it echoes ids
   // (bot-mode setup aid); once linked it indexes foreign document posts.
   client.addEventHandler(onChannelPost, new NewMessage({}));
 
-  // Channel: DB setting (linked from the UI) wins; TG_CHANNEL_ID is a seed.
-  const saved = (await getSetting("channel")) || cfg.channel;
+  // Channel: DB setting (linked from the UI) wins; TG_CHANNEL_ID is a seed; fallback to any linked user's channel.
+  const firstUser = await User.findOne({ channel_id: { $nin: [null, ""] } }, { channel_id: 1 }).lean().catch(() => null);
+  const candidates = [await getSetting("channel"), cfg.channel, firstUser?.channel_id].filter(Boolean);
+  const saved = candidates[0];
   if (!saved) {
     tg.error = "no storage linked yet — paste a channel link in the app";
     console.log(`[tg] ${tg.error}`);
     return;
   }
-  try {
-    const { title } = await setChannel(saved);
-    console.log(`[tg] storage channel: "${title}"`);
-  } catch (e) {
-    tg.error = `stored channel unreachable: ${e.message}`;
+
+  let linked = false;
+  let lastBootErr = null;
+  for (const candidate of [...new Set(candidates)]) {
+    try {
+      const { title } = await setChannel(candidate);
+      console.log(`[tg] storage channel: "${title}"`);
+      linked = true;
+      break;
+    } catch (e) {
+      lastBootErr = e;
+    }
+  }
+  if (!linked && lastBootErr) {
+    tg.error = `stored channel unreachable: ${lastBootErr.message}`;
     console.warn(`[tg] ${tg.error}`);
   }
+}
+
+/** Hydrate InputPeerChannel / InputPeerChat to full Channel / Chat entity when needed. */
+async function hydrateEntity(ent) {
+  if (!ent || !tg.client) return ent;
+  if (ent.className === "InputPeerChannel" || ent.className === "InputPeerChat") {
+    return await tg.client.getEntity(ent);
+  }
+  return ent;
 }
 
 /** Point storage at a channel/supergroup; persists across restarts. */
@@ -78,50 +230,27 @@ export async function setChannel(refOrEntity) {
   if (!tg.client) throw err("Telegram offline", 503);
   let ent = refOrEntity;
   if (typeof ent !== "object" || !ent?.className) {
-    try {
-      ent = await resolvePeer(ent);
-    } catch (resolveErr) {
-      // If Telegram API cannot resolve the peer immediately (e.g. access_hash needed or private),
-      // synthesize a lightweight channel record using the ID so linking succeeds and persists.
-      const rawStr = String(refOrEntity).trim();
-      const cMatch = rawStr.match(/(?:t\.me\/|telegram\.me\/)c\/(\d+)/i);
-      const cleanId = cMatch ? cMatch[1] : rawStr.replace(/^-100/, "").replace(/^-/, "");
-      if (/^\d+$/.test(cleanId)) {
-        const formattedId = `-100${cleanId}`;
-        await setSetting("channel", formattedId);
-        await saveTgEntity({
-          id: cleanId,
-          title: `Group (${formattedId})`,
-          className: "Channel",
-        });
-        return { id: formattedId, title: `Group (${formattedId})` };
-      }
-      throw resolveErr;
-    }
+    ent = await resolvePeer(ent, { requireFullEntity: true });
+  } else {
+    ent = await hydrateEntity(ent);
   }
+
   if (!ent || (ent.className !== "Channel" && ent.className !== "Chat")) {
     if (ent?.className?.includes("Forbidden")) {
       throw err("TeleMoon cannot access this channel — it was kicked or access is forbidden", 403);
     }
     throw err("TeleMoon needs a channel or group — private user chats aren't supported", 400);
   }
+
   tg.channel = ent;
   tg.ready = true;
   tg.error = null;
+
   const isChannel = ent.className === "Channel";
   const formattedId = isChannel ? `-100${ent.id.toString()}` : `-${ent.id.toString()}`;
+  cacheVerified(tg.client, ent);
   await setSetting("channel", formattedId);
-  try {
-    await saveTgEntity({
-      id: ent.id.toString(),
-      accessHash: ent.accessHash?.toString?.() || null,
-      title: ent.title || null,
-      username: ent.username || null,
-      className: ent.className || null,
-    });
-  } catch (e) {
-    console.warn("[tg] saveTgEntity in setChannel:", e.message);
-  }
+  await persistEntity(ent);
   return { id: formattedId, title: ent.title || "Untitled" };
 }
 
@@ -131,22 +260,16 @@ export async function connectByLink(link) {
   const raw = String(link || "").trim();
   if (!raw) throw err("Please enter a channel link, @username, or chat ID", 400);
 
-  // Private channel link: https://t.me/c/1234567890 or https://t.me/c/1234567890/123
-  const cMatch = raw.match(/(?:t\.me\/|telegram\.me\/)c\/(\d+)(?:\/\d+)?/i);
-  if (cMatch) {
-    return await setChannel(`-100${cMatch[1]}`);
-  }
+  const parsed = normalizeChannelRef(raw);
 
-  // Invite links: t.me/+HASH or t.me/joinchat/HASH
-  const invite = raw.match(/(?:t\.me\/|telegram\.me\/)?(?:joinchat\/|\+)([A-Za-z0-9_-]{8,})/i);
-  if (invite) {
+  if (parsed.type === "invite") {
     if (tg.mode === "bot") {
       throw err(
-        "Telegram bots cannot follow invite links. Please add your bot to the channel/group as an Administrator, then enter the channel's @username or ID (-100...)",
+        "Telegram bots cannot follow invite links. Please add your bot to the channel/group as an Administrator, then enter the channel's https://t.me/c/... link, @username, or ID (-100...)",
         400
       );
     }
-    const hash = invite[1];
+    const hash = parsed.hash;
     try {
       const upd = await tg.client.invoke(new Api.messages.ImportChatInvite({ hash }));
       const chat = upd.chats?.[0];
@@ -156,18 +279,12 @@ export async function connectByLink(link) {
       if (/ALREADY_PARTICIPANT/.test(errMsg)) {
         try {
           const info = await tg.client.invoke(new Api.messages.CheckChatInvite({ hash }));
-          if (info.chat) return await setChannel(info.chat);
+          if (info?.chat) return await setChannel(info.chat);
         } catch (_) {}
-
-        try {
-          const dialogs = await tg.client.getDialogs({ limit: 150 });
-          const groupOrChan = dialogs.find(
-            (d) => d.entity && (d.entity.className === "Channel" || d.entity.className === "Chat")
-          );
-          if (groupOrChan?.entity) return await setChannel(groupOrChan.entity);
-        } catch (_) {}
-
-        throw err("You are already a participant in this chat. Please select it from your channels list below or enter its ID.", 400);
+        throw err(
+          "You are already a participant in this chat. Please select it from your channels list below or enter its t.me/c/... link or ID.",
+          400
+        );
       }
       if (/INVITE_HASH/.test(errMsg)) {
         throw err("That Telegram invite link is invalid or has expired.", 400);
@@ -185,33 +302,8 @@ export async function connectByLink(link) {
     }
   }
 
-  // Public channel link: https://t.me/username or https://t.me/username/123
-  const pubMatch = raw.match(/(?:t\.me\/|telegram\.me\/)([A-Za-z]\w{3,})(?:\/\d+)?/i);
-  if (pubMatch && !["joinchat", "c"].includes(pubMatch[1].toLowerCase())) {
-    return await setChannel(`@${pubMatch[1]}`);
-  }
-
-  // Direct channel or group ID
-  if (/^-?100\d+$/.test(raw)) {
-    const formatted = raw.startsWith("-") ? raw : `-${raw}`;
-    return await setChannel(formatted);
-  }
-  if (/^-\d+$/.test(raw)) {
-    return await setChannel(raw);
-  }
-  if (/^\d{10,}$/.test(raw)) {
-    return await setChannel(`-100${raw}`);
-  }
-  if (/^\d{5,9}$/.test(raw)) {
-    return await setChannel(`-${raw}`);
-  }
-
-  // Username format: @name or clean name
-  if (raw.startsWith("@")) {
-    return await setChannel(raw);
-  }
-  if (/^[A-Za-z]\w{3,32}$/.test(raw)) {
-    return await setChannel(`@${raw}`);
+  if (parsed.type === "id" || parsed.type === "username") {
+    return await setChannel(parsed.ref);
   }
 
   return await setChannel(raw);
@@ -222,356 +314,236 @@ export async function listDialogs() {
   if (!tg.client) throw err(tg.error || "Telegram offline", 503);
   if (tg.mode === "bot")
     throw err("browsing your chats needs a user session (npm run login) — bots can't list dialogs", 400);
-  const dialogs = await tg.client.getDialogs({ limit: 200 });
-  return dialogs
-    .filter((d) => d.entity?.className === "Channel" || d.entity?.className === "Chat")
-    .map((d) => {
+
+  const seen = new Set();
+  const result = [];
+  for (const params of [{ limit: 200 }, { limit: 200, archived: true }]) {
+    const dialogs = await tg.client.getDialogs(params).catch((e) => {
+      if (params.archived) return [];
+      throw e;
+    });
+    for (const d of dialogs) {
+      if (d.entity?.className !== "Channel" && d.entity?.className !== "Chat") continue;
       const isChannel = d.entity.className === "Channel";
       const id = isChannel ? `-100${d.entity.id.toString()}` : `-${d.entity.id.toString()}`;
-      return {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      result.push({
         id,
         title: d.entity.title || "Untitled Chat",
         username: d.entity.username || null,
         group: isChannel ? !!d.entity.megagroup : true,
-        current: !!tg.channel && d.entity.id.toString() === tg.channel.id.toString(),
-      };
-    });
+        current: !!tg.channel && d.entity.id.toString() === tg.channel.id?.toString(),
+      });
+    }
+  }
+  return result;
 }
 
-/** Resolve a string, bigInt, or entity into a Telegram Entity */
-export async function resolvePeer(refOrEntity) {
+async function searchDialogsForPeer(parsed) {
+  if (tg.mode === "bot" || typeof tg.client.getDialogs !== "function") return null;
+  const cleanT = parsed.cleanId || "";
+  const matchUname = parsed.username ? parsed.username.toLowerCase() : null;
+  for (const params of [{}, { archived: true }]) {
+    try {
+      const dialogs = await tg.client.getDialogs(params);
+      const found = dialogs.find((d) => {
+        if (!d?.entity) return false;
+        if (d.entity.className !== "Channel" && d.entity.className !== "Chat") return false;
+        const eid = d.entity.id?.toString();
+        const did = d.id?.toString();
+        const uname = d.entity.username?.toLowerCase();
+        if (
+          cleanT &&
+          (eid === cleanT || did === cleanT || did === `-100${cleanT}` || did === `-${cleanT}`)
+        ) {
+          return true;
+        }
+        if (matchUname && uname && uname === matchUname) return true;
+        return false;
+      });
+      if (found?.entity) return found.entity;
+    } catch (_) {}
+  }
+  return null;
+}
+
+/** Resolve a string, bigInt, or entity into a verified Telegram Peer / Entity. */
+export async function resolvePeer(refOrEntity, { requireFullEntity = false } = {}) {
   if (!tg.client) throw err("Telegram offline", 503);
-  if (!refOrEntity) return tg.channel;
+  if (!refOrEntity) {
+    if (tg.channel) return tg.channel;
+    throw err("No channel or group connected", 400);
+  }
+
   if (typeof refOrEntity === "object" && refOrEntity.className) {
-    if (refOrEntity.id && (refOrEntity.className === "Channel" || refOrEntity.className === "Chat")) {
-      try {
-        await saveTgEntity({
-          id: refOrEntity.id.toString(),
-          accessHash: refOrEntity.accessHash?.toString?.() || null,
-          title: refOrEntity.title || null,
-          username: refOrEntity.username || null,
-          className: refOrEntity.className || null,
-        });
-      } catch (_) {}
+    const resolved = requireFullEntity ? await hydrateEntity(refOrEntity) : refOrEntity;
+    if (resolved?.id && (resolved.className === "Channel" || resolved.className === "Chat")) {
+      cacheVerified(tg.client, resolved);
+      await persistEntity(resolved);
     }
-    return refOrEntity;
+    return resolved;
   }
 
-  let r = String(refOrEntity).trim();
-
-  // Strip t.me/c/... if passed directly
-  const cMatch = r.match(/(?:t\.me\/|telegram\.me\/)c\/(\d+)/i);
-  if (cMatch) {
-    r = `-100${cMatch[1]}`;
-  } else {
-    // Strip public t.me/... if passed directly
-    const pubMatch = r.match(/(?:t\.me\/|telegram\.me\/)([A-Za-z]\w{3,})/i);
-    if (pubMatch && !["joinchat", "c"].includes(pubMatch[1].toLowerCase())) {
-      r = `@${pubMatch[1]}`;
-    }
+  const parsed = normalizeChannelRef(refOrEntity);
+  if (parsed.type === "empty") {
+    throw err("Please enter a channel link, @username, or chat ID", 400);
+  }
+  if (parsed.type === "invite") {
+    throw err("Please use /tg/connect for invite links", 400);
+  }
+  if (parsed.type === "other") {
+    throw err(`Invalid Telegram channel link or ID: "${parsed.ref}"`, 400);
   }
 
-  const cleanR = r.replace(/^-100/, "").replace(/^-/, "");
+  const cleanR = parsed.cleanId || "";
+  const matchUname = parsed.username ? parsed.username.toLowerCase() : null;
 
+  // 1. Fast match against current channel or verified cache on this client
   if (tg.channel) {
-    const chanIdStr = tg.channel.id.toString().replace(/^-100/, "").replace(/^-/, "");
-    if (cleanR === chanIdStr || r === tg.channel.username || (r.startsWith("@") && r.slice(1) === tg.channel.username)) {
+    const chanIdStr = tg.channel.id?.toString().replace(/^-100/, "").replace(/^-/, "");
+    const chanUname = tg.channel.username?.toLowerCase();
+    if ((cleanR && cleanR === chanIdStr) || (matchUname && chanUname && matchUname === chanUname)) {
       return tg.channel;
     }
   }
 
-  // Check persistent database for entity access_hash
+  const verifiedMap = getVerifiedMap(tg.client);
+  if (verifiedMap) {
+    const cached =
+      (cleanR && verifiedMap.get(cleanR)) ||
+      (matchUname && verifiedMap.get(`@${matchUname}`));
+    if (cached) return cached;
+  }
+
+  // 2. Check persistent MongoDB cache (and verify/hydrate via getEntity so stale accessHashes fall through cleanly)
   try {
-    const savedEntity = (await getTgEntity(cleanR)) || (await getTgEntity(r));
+    const savedEntity = (cleanR && (await getTgEntity(cleanR))) || (await getTgEntity(parsed.ref));
     if (savedEntity) {
+      let candidatePeer = null;
       if (savedEntity.class_name === "Channel" && savedEntity.access_hash) {
-        return new Api.InputPeerChannel({
+        candidatePeer = new Api.InputPeerChannel({
           channelId: bigInt(savedEntity.id),
           accessHash: bigInt(savedEntity.access_hash),
         });
       } else if (savedEntity.class_name === "Chat") {
-        return new Api.InputPeerChat({
+        candidatePeer = new Api.InputPeerChat({
           chatId: bigInt(savedEntity.id),
         });
+      }
+      if (candidatePeer) {
+        try {
+          const liveEnt = await tg.client.getEntity(candidatePeer);
+          if (liveEnt && (liveEnt.className === "Channel" || liveEnt.className === "Chat")) {
+            cacheVerified(tg.client, liveEnt);
+            await persistEntity(liveEnt);
+            return liveEnt;
+          }
+        } catch (dbVerifyErr) {
+          console.warn("[tg] cached entity verification fell through:", dbVerifyErr.message);
+        }
       }
     }
   } catch (dbErr) {
     console.warn("[tg] entity lookup warning:", dbErr.message);
   }
 
-  let targetId = r;
-  if (!targetId.startsWith("@") && !targetId.startsWith("-") && /^\d{10,}$/.test(targetId)) {
-    targetId = `-100${targetId}`;
-  } else if (!targetId.startsWith("@") && !targetId.startsWith("-") && /^\d+$/.test(targetId)) {
-    targetId = `-${targetId}`;
-  } else if (!targetId.startsWith("@") && !targetId.startsWith("-") && /^[A-Za-z]\w{3,32}$/.test(targetId)) {
-    targetId = `@${targetId}`;
+  // 3. Direct GramJS getEntity lookup
+  const targetId = parsed.ref;
+  const candidateTargets = [];
+  if (parsed.type === "id") {
+    candidateTargets.push(bigInt(targetId));
+    // If targetId was "-<id>" (legacy chat format) also try supergroup "-100<id>"
+    if (!targetId.startsWith("-100") && cleanR) {
+      candidateTargets.push(bigInt(`-100${cleanR}`));
+    }
+  } else {
+    candidateTargets.push(targetId);
   }
 
-  try {
-    const ent = await tg.client.getEntity(/^-?\d+$/.test(targetId) ? bigInt(targetId) : targetId.startsWith("@") ? targetId : `@${targetId}`);
-    if (ent && ent.id) {
-      try {
-        await saveTgEntity({
-          id: ent.id.toString(),
-          accessHash: ent.accessHash?.toString?.() || null,
-          title: ent.title || null,
-          username: ent.username || null,
-          className: ent.className || null,
-        });
-      } catch (_) {}
-    }
-    return ent;
-  } catch (err1) {
-    if (tg.mode !== "bot") {
-      try {
-        const dialogs = await tg.client.getDialogs({});
-        const cleanT = targetId.replace(/^-100/, "").replace(/^-/, "");
-        const found = dialogs.find((d) => {
-          if (!d.entity) return false;
-          const eid = d.entity.id?.toString();
-          const did = d.id?.toString();
-          const uname = d.entity.username?.toLowerCase();
-          const matchUname = targetId.startsWith("@") ? targetId.slice(1).toLowerCase() : targetId.toLowerCase();
-          return (
-            eid === cleanT ||
-            did === cleanT ||
-            did === targetId ||
-            did === `-100${cleanT}` ||
-            did === `-${cleanT}` ||
-            (uname && uname === matchUname)
-          );
-        });
-        if (found?.entity) {
-          try {
-            await saveTgEntity({
-              id: found.entity.id.toString(),
-              accessHash: found.entity.accessHash?.toString?.() || null,
-              title: found.entity.title || null,
-              username: found.entity.username || null,
-              className: found.entity.className || null,
-            });
-          } catch (_) {}
-          return found.entity;
-        }
-      } catch (_) {}
-    }
-
-    // Try getInputEntity as last direct Telegram lookup
+  let lastErr = null;
+  for (const cand of candidateTargets) {
     try {
-      const inputPeer = await tg.client.getInputEntity(/^-?\d+$/.test(targetId) ? bigInt(targetId) : targetId);
-      if (inputPeer) return inputPeer;
-    } catch (_) {}
-
-    // Fallback: If we have a connected tg.channel, use it
-    if (tg.channel) return tg.channel;
-
-    // Fallback: If numeric ID, try constructing InputPeerChat as last resort
-    const fallbackClean = targetId.replace(/^-100/, "").replace(/^-/, "");
-    if (/^\d+$/.test(fallbackClean)) {
-      return new Api.InputPeerChat({ chatId: bigInt(fallbackClean) });
-    }
-
-    const msg = err1.errorMessage || err1.message || "";
-    if (/CHANNEL_INVALID|CHAT_INVALID|Could not find input entity|Cannot find any entity/i.test(msg)) {
-      if (tg.mode === "bot") {
-        throw err(
-          "TeleMoon cannot access this channel/group. Make sure your Telegram bot is added to the channel as an Administrator with post/read permissions, then try again.",
-          400
-        );
-      } else {
-        throw err(
-          "TeleMoon could not find or access this Telegram channel. Make sure your account is a member or admin of the channel and check the link/ID.",
-          400
-        );
-      }
-    }
-    if (/USERNAME_NOT_OCCUPIED|USERNAME_INVALID/i.test(msg)) {
-      throw err(`The Telegram channel or group "${targetId}" does not exist. Please check for typos.`, 404);
-    }
-    if (/CHAT_ADMIN_REQUIRED|CHAT_WRITE_FORBIDDEN/i.test(msg)) {
-      throw err("Administrator permissions are required in this Telegram channel/group to connect storage.", 403);
-    }
-    throw err(msg || "Could not resolve Telegram channel", 400);
-  }
-}
-
-/**
- * Scan past history of a channel / group and index all documents & photos into the virtual drive.
- */
-export async function syncChannelHistory({ peerRef, ownerId, targetParentId = "root", limit = 1000 } = {}) {
-  if (!tg.client) throw err("Telegram offline", 503);
-
-  const entity = await resolvePeer(peerRef);
-  if (!entity) throw err("No channel or group connected", 400);
-
-  // Elevate any previously imported files sitting inside "Telegram Inbox" directly to 'root'
-  try {
-    const inbox = await Node.findOne({ name: "Telegram Inbox", type: "folder", deleted_at: null }).lean();
-    if (inbox) {
-      await Node.updateMany(
-        {
-          parent_id: inbox.id,
-          $or: [{ owner_id: ownerId || null }, { owner_id: null }],
-        },
-        { $set: { parent_id: targetParentId || "root" } }
-      );
-    }
-  } catch (e) {
-    console.warn("[tg] Elevate Inbox files warning:", e.message);
-  }
-
-  const existingMsgIds = await getIndexedMessageIds(ownerId);
-
-  let scanned = 0;
-  let imported = 0;
-  let skipped = 0;
-
-  const processMessage = async (m) => {
-    if (!m) return false;
-    scanned++;
-
-    // Skip TeleMoon multipart uploads
-    if ((m.message || "").startsWith("tm1;")) {
-      skipped++;
-      return false;
-    }
-
-    const doc = m.media?.document;
-    const photo = m.media?.photo;
-    if (!doc && !photo) return false;
-
-    // Skip stickers
-    if (doc?.attributes?.some((a) => a.className === "DocumentAttributeSticker")) {
-      return false;
-    }
-
-    // Already indexed in our database
-    if (existingMsgIds.has(m.id)) {
-      skipped++;
-      return false;
-    }
-
-    let name;
-    let size = 0;
-    let mime = null;
-
-    if (doc) {
-      const fnAttr = doc.attributes?.find(
-        (a) => a.className === "DocumentAttributeFilename"
-      );
-      name = fnAttr?.fileName;
-      if (!name) {
-        const audioAttr = doc.attributes?.find(
-          (a) => a.className === "DocumentAttributeAudio"
-        );
-        if (audioAttr?.title) {
-          name = `${audioAttr.performer ? audioAttr.performer + " - " : ""}${audioAttr.title}`;
-          const ext = doc.mimeType?.includes("ogg") ? ".ogg" : doc.mimeType?.includes("mp3") ? ".mp3" : ".m4a";
-          if (!name.endsWith(ext)) name += ext;
-        } else if (doc.attributes?.some((a) => a.className === "DocumentAttributeVideo")) {
-          name = `video_${m.id}.mp4`;
-        } else {
-          const ext = doc.mimeType ? `.${doc.mimeType.split("/")[1] || "bin"}` : "";
-          name = `telegram_${m.id}${ext}`;
+      const ent = await tg.client.getEntity(cand);
+      if (ent && ent.id) {
+        if (ent.className === "Channel" || ent.className === "Chat") {
+          cacheVerified(tg.client, ent);
+          await persistEntity(ent);
+          return ent;
         }
-      }
-      size = Number(doc.size?.toString?.() ?? doc.size);
-      mime = doc.mimeType || null;
-    } else if (photo) {
-      const sizes = photo.sizes || [];
-      const large = sizes[sizes.length - 1];
-      size = Number(large?.size || (large?.w && large?.h ? Math.round(large.w * large.h * 0.3) : 100000));
-      mime = "image/jpeg";
-      const caption = (m.message || "").trim().slice(0, 40).replace(/[/\\]/g, "-");
-      name = caption ? `${caption}_${m.id}.jpg` : `photo_${m.id}.jpg`;
-    }
-
-    name = String(name || `telegram_${m.id}`).replace(/[/\\]/g, "-").trim() || `telegram_${m.id}`;
-    if (!size || isNaN(size)) return false;
-
-    await createFileNode({
-      parentId: targetParentId || "root",
-      name,
-      size,
-      mime,
-      ownerId: ownerId || null,
-      parts: [{ msg_id: m.id, size }],
-    });
-
-    existingMsgIds.add(m.id);
-    imported++;
-    return true;
-  };
-
-  let iterSuccess = false;
-  try {
-    for await (const m of tg.client.iterMessages(entity, { limit })) {
-      await processMessage(m);
-    }
-    iterSuccess = true;
-  } catch (iterErr) {
-    const iterMsg = iterErr.errorMessage || iterErr.message || "";
-    console.warn(`[tg] iterMessages encountered: ${iterMsg}. Attempting fallback...`);
-
-    const isRestricted = /CHAT_ADMIN_REQUIRED|BOT_METHOD_INVALID|CHANNEL_PRIVATE/i.test(iterMsg);
-    if (!isRestricted && tg.mode !== "bot") {
-      throw err(iterMsg || "Failed to scan Telegram history", 400);
-    }
-
-    try {
-      let maxId = 0;
-      try {
-        const full = await tg.client.invoke(new Api.channels.GetFullChannel({ channel: entity }));
-        maxId = full?.fullChat?.readInboxMaxId || full?.fullChat?.readOutboxMaxId || full?.fullChat?.pts || 0;
-      } catch (_) {}
-
-      if (!maxId || maxId < 1) {
-        maxId = 500;
-      }
-
-      const scanLimit = Math.min(limit, 1000);
-      const startId = Math.max(1, maxId - scanLimit + 1);
-
-      for (let fromId = maxId; fromId >= startId; fromId -= 100) {
-        const batchIds = [];
-        for (let i = fromId; i > Math.max(0, fromId - 100) && i >= startId; i--) {
-          batchIds.push(i);
+        if (!requireFullEntity && (ent.className === "InputPeerChannel" || ent.className === "InputPeerChat")) {
+          return ent;
         }
-        if (!batchIds.length) break;
-
-        try {
-          const msgs = await tg.client.getMessages(entity, { ids: batchIds });
-          for (const m of msgs) {
-            if (m && m.id) await processMessage(m);
+        if (requireFullEntity && (ent.className === "InputPeerChannel" || ent.className === "InputPeerChat")) {
+          const full = await hydrateEntity(ent);
+          if (full && (full.className === "Channel" || full.className === "Chat")) {
+            cacheVerified(tg.client, full);
+            await persistEntity(full);
+            return full;
           }
-        } catch (batchErr) {
-          console.warn("[tg] batch getMessages warning:", batchErr.message);
-          break;
+        }
+        // Only treat User entity as error (private user chats aren't storage channels)
+        if (ent.className === "User" || ent.className === "InputPeerUser" || ent.className === "ChannelForbidden" || ent.className === "ChatForbidden") {
+          return ent;
         }
       }
-      iterSuccess = true;
-    } catch (fallbackErr) {
-      console.warn("[tg] Fallback batch scan warning:", fallbackErr.message);
-      if (imported === 0 && !iterSuccess) {
-        throw err(iterMsg || fallbackErr.message || "Could not read chat history", 400);
-      }
+    } catch (e) {
+      lastErr = e;
     }
   }
 
-  // Notify connected clients
-  if (ownerId) {
-    emitSyncChange(ownerId, 0);
+  // 4. User-mode dialog scan (checks active AND archived folders with no 150-chat limit)
+  const dialogEntity = await searchDialogsForPeer(parsed);
+  if (dialogEntity) {
+    cacheVerified(tg.client, dialogEntity);
+    await persistEntity(dialogEntity);
+    return dialogEntity;
   }
-  emitSyncChange("system", 0);
 
-  return {
-    scanned,
-    imported,
-    skipped,
-    folderId: targetParentId || "root",
-    folderName: targetParentId === "root" ? "Main Drive" : targetParentId,
-  };
+  // 5. Try getInputEntity as final GramJS lookup, hydrating Channel/Chat peers
+  for (const cand of candidateTargets) {
+    try {
+      const inputPeer = await tg.client.getInputEntity(cand);
+      if (inputPeer && (inputPeer.className === "InputPeerChannel" || inputPeer.className === "InputPeerChat")) {
+        try {
+          const full = await hydrateEntity(inputPeer);
+          if (full && (full.className === "Channel" || full.className === "Chat")) {
+            cacheVerified(tg.client, full);
+            await persistEntity(full);
+            return full;
+          }
+        } catch (_) {}
+        if (!requireFullEntity) return inputPeer;
+      }
+    } catch (e) {
+      if (!lastErr) lastErr = e;
+    }
+  }
+
+  // 6. Accurate error reporting (never silently switch to another channel or fabricate peers)
+  const msg = lastErr?.errorMessage || lastErr?.message || "";
+  if (/USERNAME_NOT_OCCUPIED|USERNAME_INVALID/i.test(msg)) {
+    throw err(`The Telegram channel or group "${targetId}" does not exist. Please check for typos.`, 404);
+  }
+  if (/CHAT_ADMIN_REQUIRED|CHAT_WRITE_FORBIDDEN|CHANNEL_PRIVATE/i.test(msg)) {
+    throw err("TeleMoon does not have permission to access this Telegram channel/group.", 403);
+  }
+  if (tg.mode === "bot") {
+    throw err(
+      `TeleMoon could not access group ${targetId}. Make sure @${tg.botUsername || "your bot"} is added to the group as an Administrator, send any message in the group, then try again.`,
+      400
+    );
+  }
+  if (parsed.type === "id") {
+    throw err(
+      `TeleMoon could not access private group ${targetId}. Make sure the connected Telegram account is a member of this group (a t.me/c/ link doesn't join automatically — paste a https://t.me/+... invite link instead, or add the account to the group first).`,
+      400
+    );
+  }
+  throw err(
+    "TeleMoon could not find or access this Telegram channel. Make sure your account is a member or admin of the channel and check the link/ID.",
+    400
+  );
 }
 
 async function onChannelPost(ev) {
@@ -580,16 +552,10 @@ async function onChannelPost(ev) {
     const cid = m?.peerId?.channelId || m?.peerId?.chatId;
     if (!cid) return;
 
-    if (ev.chat) {
-      try {
-        await saveTgEntity({
-          id: ev.chat.id?.toString(),
-          accessHash: ev.chat.accessHash?.toString?.() || null,
-          title: ev.chat.title || null,
-          username: ev.chat.username || null,
-          className: ev.chat.className || null,
-        });
-      } catch (_) {}
+    const chat = ev.chat || m?.chat || (await ev.getChat?.().catch(() => null));
+    if (chat) {
+      cacheVerified(tg.client, chat);
+      await persistEntity(chat);
     }
 
     const cidStr = cid.toString();
@@ -597,21 +563,23 @@ async function onChannelPost(ev) {
 
     let matched = false;
     if (tg.channel) {
-      const activeClean = tg.channel.id.toString().replace(/^-100/, "").replace(/^-/, "");
+      const activeClean = tg.channel.id?.toString().replace(/^-100/, "").replace(/^-/, "");
       if (cleanCid === activeClean) matched = true;
     }
 
+    const escapedCid = escapeRegex(cleanCid);
     const user = await User.findOne({
       $or: [
         { channel_id: `-100${cleanCid}` },
         { channel_id: `-${cleanCid}` },
         { channel_id: cleanCid },
-        { channel_id: new RegExp(cleanCid) },
+        { channel_id: new RegExp(`(?:^|/c/)${escapedCid}(?:$|/)`) },
       ],
     }).lean();
 
     if (!matched && !user) {
-      console.log(`[setup] channel post from unlinked channel id: -100${cid}`);
+      const isChan = m?.peerId?.className === "PeerChannel";
+      console.log(`[setup] channel post from unlinked channel id: ${isChan ? `-100${cleanCid}` : `-${cleanCid}`}`);
       return;
     }
 

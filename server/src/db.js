@@ -10,6 +10,7 @@ fs.mkdirSync(`${cfg.dataDir}/tmp`, { recursive: true });
 
 export const now = () => Date.now();
 export const uid = () => nanoid(12);
+export const escapeRegex = (str) => String(str).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /* ==========================================================================
    MONGOOSE SCHEMAS & MODELS
@@ -297,7 +298,7 @@ export async function getTgEntity(idOrUsername) {
   const s = String(idOrUsername).trim().replace(/^@/, "");
   const cleanId = s.replace(/^-100/, "").replace(/^-/, "");
   const doc = await TgEntity.findOne({
-    $or: [{ id: cleanId }, { username: { $regex: new RegExp(`^${s}$`, "i") } }],
+    $or: [{ id: cleanId }, { username: { $regex: new RegExp(`^${escapeRegex(s)}$`, "i") } }],
   }).lean();
   return doc;
 }
@@ -670,7 +671,10 @@ export async function createFileNode({
       created_at: t,
     }).save();
 
-    // Insert chunks pointing to targetBlobId
+    // Insert chunks pointing to targetBlobId (clear prior chunks when replacing an existing node)
+    if (replaceNodeId) {
+      await Chunk.deleteMany({ file_id: nodeId });
+    }
     for (let i = 0; i < parts.length; i++) {
       await new Chunk({
         file_id: nodeId,
@@ -1002,7 +1006,7 @@ export async function getShare(shareId) {
 export async function generateDropCode() {
   for (let attempt = 0; attempt < 50; attempt++) {
     const code = String(Math.floor(1000 + Math.random() * 9000));
-    const exists = await DropLink.findOne({ code: { $regex: new RegExp(`^${code}$`, "i") } });
+    const exists = await DropLink.findOne({ code: { $regex: new RegExp(`^${escapeRegex(code)}$`, "i") } });
     if (!exists) return code;
   }
   return String(Math.floor(10000 + Math.random() * 90000));
@@ -1032,7 +1036,7 @@ export async function createDropLink({ folderId, ownerId, code, password, title 
     if (!/^[a-zA-Z0-9_-]{2,32}$/.test(finalCode)) {
       throw new Error("Code must be 2–32 letters, numbers, hyphens, or underscores");
     }
-    const existing = await DropLink.findOne({ code: { $regex: new RegExp(`^${finalCode}$`, "i") } });
+    const existing = await DropLink.findOne({ code: { $regex: new RegExp(`^${escapeRegex(finalCode)}$`, "i") } });
     if (existing) {
       throw new Error(`The code or link "${finalCode}" is already in use. Please choose another.`);
     }
@@ -1068,7 +1072,7 @@ export async function getDropLinkById(id) {
 
 export async function getDropLinkByCode(code) {
   if (!code) return null;
-  const link = await DropLink.findOne({ code: { $regex: new RegExp(`^${code.trim()}$`, "i") } }).lean();
+  const link = await DropLink.findOne({ code: { $regex: new RegExp(`^${escapeRegex(code.trim())}$`, "i") } }).lean();
   if (!link) return null;
   return populateDropLink(link);
 }
@@ -1089,7 +1093,7 @@ export async function updateDropLink(id, ownerId, { code, password, is_active, t
       throw new Error("Code must be 2–32 letters, numbers, hyphens, or underscores");
     }
     const conflict = await DropLink.findOne({
-      code: { $regex: new RegExp(`^${c}$`, "i") },
+      code: { $regex: new RegExp(`^${escapeRegex(c)}$`, "i") },
       id: { $ne: id },
     });
     if (conflict) {

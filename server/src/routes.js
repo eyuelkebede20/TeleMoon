@@ -13,7 +13,7 @@ import bigInt from "big-integer";
 import jwt from "jsonwebtoken";
 import { cfg } from "./config.js";
 import {
-  db, now, uid, getNode, breadcrumb, children, subtreeIds,
+  db, now, uid, escapeRegex, getNode, breadcrumb, children, subtreeIds,
   isAncestor, uniqueName, createFileNode, createFolderNode,
   trashNode, restoreNode, updateNode, getDelta, getSnapshot,
   getFileVersions, getTrash, findVerifiedBlob, registerDevice,
@@ -27,7 +27,7 @@ import {
 import { sign, auth } from "./auth.js";
 import { addSSEClient, emitSyncChange } from "./sync.js";
 import {
-  tg, sendDocument, deleteMessages, streamRange, connectByLink, listDialogs, syncChannelHistory, resolvePeer,
+  tg, sendDocument, deleteMessages, streamRange, connectByLink, listDialogs, resolvePeer, normalizeChannelRef,
 } from "./telegram.js";
 import {
   getKeepAliveStatus, triggerPing, updateKeepAliveConfig,
@@ -46,14 +46,8 @@ async function getUserPeer(userId) {
     if (tg.channel) return tg.channel;
     throw new Error("No Telegram channel connected");
   }
-  let cid = String(u.channel_id).trim();
-  const cMatch = cid.match(/(?:t\.me\/|telegram\.me\/)c\/(\d+)/i);
-  if (cMatch) {
-    cid = `-100${cMatch[1]}`;
-  }
-  if (!cid.startsWith("@") && !cid.startsWith("-100") && /^\d+$/.test(cid)) {
-    cid = `-100${cid}`;
-  }
+  const parsed = normalizeChannelRef(u.channel_id);
+  const cid = (parsed.type === "id" || parsed.type === "username") ? parsed.ref : String(u.channel_id).trim();
   if (/^-?\d+$/.test(cid)) return bigInt(cid);
   return cid;
 }
@@ -242,38 +236,29 @@ api.get("/tg/dialogs", auth, async (_req, res) => {
 
 api.post("/user/channel", auth, async (req, res) => {
   try {
-    let { channel_id } = req.body;
+    let { channel_id } = req.body || {};
     if (!channel_id) return bad(res, 400, "channel_id required");
     channel_id = String(channel_id).trim();
 
-    // Check if it's a t.me/c/ link: https://t.me/c/3836770302/35
-    const cMatch = channel_id.match(/(?:t\.me\/|telegram\.me\/)c\/(\d+)/i);
-    let extractedId = cMatch ? `-100${cMatch[1]}` : null;
-
-    let channel = null;
-    if (channel_id.includes("t.me") || channel_id.includes("telegram.me") || channel_id.startsWith("@")) {
-      try {
-        channel = await connectByLink(channel_id);
-      } catch (linkErr) {
-        if (!extractedId) throw linkErr;
+    // When Telegram client is live, validate & activate the target group/channel consistently
+    if (tg.client) {
+      const channel = await connectByLink(channel_id);
+      if (channel?.id) {
+        await User.updateOne({ id: req.user.id }, { $set: { channel_id: channel.id } });
+        return res.json({ ok: true, channel_id: channel.id, title: channel.title });
       }
     }
 
-    if (channel?.id) {
-      let cid = String(channel.id).trim();
-      if (!cid.startsWith("@") && !cid.startsWith("-100") && /^\d+$/.test(cid)) {
-        cid = `-100${cid}`;
-      }
-      await User.updateOne({ id: req.user.id }, { $set: { channel_id: cid } });
-      return res.json({ ok: true, channel_id: cid, title: channel.title });
+    // Offline/test persistence fallback for direct IDs or usernames
+    const parsed = normalizeChannelRef(channel_id);
+    if (parsed.type === "id" || parsed.type === "username") {
+      channel_id = parsed.ref;
+    } else if (parsed.type === "invite" || /t\.me|telegram\.me|telegram\.dog/i.test(channel_id)) {
+      return bad(res, 503, tg.error || "Telegram offline");
     }
-
-    if (extractedId) channel_id = extractedId;
-    if (/^\d{10,}$/.test(channel_id)) channel_id = `-100${channel_id}`;
-    else if (/^\d{5,9}$/.test(channel_id)) channel_id = `-${channel_id}`;
 
     await User.updateOne({ id: req.user.id }, { $set: { channel_id } });
-    res.json({ ok: true, channel_id, title: `Group (${channel_id})` });
+    res.json({ ok: true, channel_id });
   } catch (e) {
     const code = e.status || (/offline/i.test(e.message) ? 503 : 400);
     bad(res, code, e.errorMessage || e.message);
@@ -284,47 +269,11 @@ api.post("/tg/connect", auth, async (req, res) => {
   try {
     const rawLink = String(req.body?.link || "").trim();
     if (!rawLink) return bad(res, 400, "link required");
-    let channel;
-    try {
-      channel = await connectByLink(rawLink);
-    } catch (connErr) {
-      const cMatch = rawLink.match(/(?:t\.me\/|telegram\.me\/)c\/(\d+)/i);
-      if (cMatch) {
-        channel = { id: `-100${cMatch[1]}`, title: `Group (-100${cMatch[1]})` };
-        await setSetting("channel", channel.id);
-      } else {
-        throw connErr;
-      }
-    }
+    const channel = await connectByLink(rawLink);
     if (channel?.id) {
-      let cid = String(channel.id).trim();
-      if (!cid.startsWith("@") && !cid.startsWith("-100") && /^\d+$/.test(cid)) {
-        cid = `-100${cid}`;
-      }
-      await User.updateOne({ id: req.user.id }, { $set: { channel_id: cid } });
+      await User.updateOne({ id: req.user.id }, { $set: { channel_id: channel.id } });
     }
     res.json(channel);
-  } catch (e) {
-    const code = e.status || (/offline/i.test(e.message) ? 503 : 400);
-    bad(res, code, e.errorMessage || e.message);
-  }
-});
-
-api.post("/tg/sync", auth, async (req, res) => {
-  try {
-    const channelRef = req.body?.channelId || req.body?.channel || req.body?.peerRef;
-    let peer = channelRef;
-    if (!peer) {
-      try { peer = await getUserPeer(req.user.id); } catch (e) {}
-    }
-    const limit = req.body?.limit ? Number(req.body.limit) : 1000;
-    const result = await syncChannelHistory({
-      peerRef: peer,
-      ownerId: req.user.id,
-      limit,
-    });
-    emitSyncChange(req.user.id, 0);
-    res.json({ ok: true, ...result });
   } catch (e) {
     const code = e.status || (/offline/i.test(e.message) ? 503 : 400);
     bad(res, code, e.errorMessage || e.message);
@@ -512,7 +461,7 @@ api.get("/search", auth, async (req, res) => {
   const term = String(req.query.q || "").trim();
   if (!term) return res.json({ results: [] });
   const results = await Node.find({
-    name: { $regex: term, $options: "i" },
+    name: { $regex: escapeRegex(term), $options: "i" },
     id: { $ne: "root" },
     deleted_at: null,
     $or: [{ owner_id: req.user.id }, { owner_id: null }],
