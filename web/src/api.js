@@ -48,6 +48,7 @@ export const api = {
   folderTree: () => j("GET", "/api/folders/tree"),
   batchMove: (ids, targetParentId) => j("POST", "/api/nodes/move", { ids, targetParentId }),
   getDropLinks: (folderId) => j("GET", `/api/folders/${folderId}/drop-links`),
+  getAllDropLinks: () => j("GET", "/api/drop-links"),
   createDropLink: (folderId, b) => j("POST", `/api/folders/${folderId}/drop-links`, b),
   updateDropLink: (id, b) => j("PATCH", `/api/drop-links/${id}`, b),
   deleteDropLink: (id) => j("DELETE", `/api/drop-links/${id}`),

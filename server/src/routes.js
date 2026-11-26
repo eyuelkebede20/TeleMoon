@@ -19,7 +19,7 @@ import {
   getFileVersions, getTrash, findVerifiedBlob, registerDevice,
   updateDeviceCursor, getDevices, revokeDevice, createSSETicket,
   verifyAndConsumeSSETicket, createShare, getShare,
-  createDropLink, getDropLinkById, getDropLinkByCode, getDropLinksByFolder,
+  createDropLink, getDropLinkById, getDropLinkByCode, getDropLinksByFolder, getDropLinksByOwner,
   updateDropLink, deleteDropLink, incrementDropLinkUploadCount,
   User, Node, Chunk, Upload, UploadPart, Blob, FileVersion,
   SyncJournal, Device, SseTicket, Share, DropLink, TgEntity, Setting,
@@ -527,6 +527,16 @@ async function verifyDropTicket(req, res, next) {
   }
 }
 
+// List all drop links owned by the signed-in user (across all folders)
+api.get("/drop-links", auth, async (req, res) => {
+  try {
+    const links = await getDropLinksByOwner(req.user.id);
+    res.json({ dropLinks: links });
+  } catch (e) {
+    bad(res, 500, e.message);
+  }
+});
+
 // List drop links for a folder
 api.get("/folders/:id/drop-links", auth, async (req, res) => {
   const folder = await getNode(req.params.id);
@@ -591,6 +601,12 @@ api.get("/drop/:code", async (req, res) => {
     return bad(res, 404, "Destination folder no longer exists");
   }
 
+  let ownerHasChannel = false;
+  try {
+    await getUserPeer(link.owner_id);
+    ownerHasChannel = true;
+  } catch (_) {}
+
   const hasPassword = Boolean(link.password_hash);
   res.json({
     valid: true,
@@ -598,9 +614,10 @@ api.get("/drop/:code", async (req, res) => {
     code: link.code,
     title: link.title || null,
     ownerHandle: link.owner_handle || "user",
-    folderName: folder.name,
+    folderName: folder.id === "root" ? "Home (Drive Root)" : folder.name,
     hasPassword,
     uploadCount: link.upload_count,
+    storageReady: Boolean(tg.client && ownerHasChannel),
     ticket: hasPassword ? null : signDropTicket(link),
   });
 });
@@ -617,7 +634,12 @@ api.post("/drop/:code/verify", async (req, res) => {
     return res.json({ ok: true, ticket: signDropTicket(link) });
   }
 
-  if (!password || !bcrypt.compareSync(String(password), link.password_hash)) {
+  const pwd = password === undefined || password === null ? "" : String(password);
+  const ok =
+    Boolean(pwd) &&
+    (bcrypt.compareSync(pwd, link.password_hash) ||
+      (pwd.trim() && bcrypt.compareSync(pwd.trim(), link.password_hash)));
+  if (!ok) {
     return bad(res, 401, "Incorrect password or PIN");
   }
 
@@ -681,7 +703,14 @@ api.put("/drop/:code/uploads/:id/parts/:idx", verifyDropTicket, async (req, res)
   if (!up || up.user_id !== req.dropLink.owner_id || up.parent_id !== req.dropLink.folder_id) {
     return bad(res, 404, "upload not found");
   }
-  if (!tg.ready) return bad(res, 503, tg.error || "Telegram storage offline");
+  if (!tg.client) return bad(res, 503, tg.error || "Telegram storage offline");
+
+  let peer;
+  try {
+    peer = await getUserPeer(up.user_id);
+  } catch (peerErr) {
+    return bad(res, 400, "Upload link owner has not linked a Telegram storage channel yet");
+  }
 
   const idx = Number(req.params.idx);
   const totalParts = Math.max(1, Math.ceil(up.size / up.chunk_size));
@@ -709,9 +738,6 @@ api.put("/drop/:code/uploads/:id/parts/:idx", verifyDropTicket, async (req, res)
         error: { code: "HASH_MISMATCH", message: "Part SHA-256 mismatch", computed: computedPartHash },
       });
     }
-
-    let peer;
-    try { peer = await getUserPeer(up.user_id); } catch (e) {}
 
     const partName =
       totalParts > 1
@@ -802,6 +828,68 @@ api.get("/folders/tree", auth, async (req, res) => {
     .sort({ name: 1 })
     .lean();
   res.json({ folders });
+});
+
+api.post("/folders/:id/auto-organize", auth, async (req, res) => {
+  try {
+    const folder = await getNode(req.params.id);
+    if (!folder || folder.type !== "folder" || folder.deleted_at) {
+      return bad(res, 404, "Folder not found");
+    }
+    const items = await children(folder.id, req.user.id);
+    const files = items.filter((n) => n.type === "file");
+    if (files.length === 0) {
+      return res.json({ ok: true, organized: 0, categories: [] });
+    }
+
+    const categoryFor = (file) => {
+      const m = String(file.mime || "").toLowerCase();
+      const n = String(file.name || "").toLowerCase();
+      if (m.startsWith("image/") || /\.(png|jpe?g|gif|webp|svg|bmp|heic|avif)$/.test(n)) return "Images";
+      if (m.startsWith("video/") || /\.(mp4|mkv|mov|avi|webm|m4v)$/.test(n)) return "Videos";
+      if (m.startsWith("audio/") || /\.(mp3|wav|ogg|flac|m4a|aac)$/.test(n)) return "Audio";
+      if (/\.(zip|rar|7z|tar|gz|xz|bz2)$/.test(n) || m.includes("zip") || m.includes("archive")) return "Archives";
+      if (/\.(js|jsx|ts|tsx|py|c|cpp|h|rs|go|java|sh|json|yml|yaml|html|css|sql|dart|md)$/.test(n)) return "Code";
+      if (m === "application/pdf" || /\.(pdf|docx?|xlsx?|pptx?|txt|csv|rtf)$/.test(n)) return "Documents";
+      return "Other";
+    };
+
+    const existingFolders = new Map(
+      items.filter((n) => n.type === "folder").map((n) => [n.name.toLowerCase(), n])
+    );
+
+    const usedCategories = new Set();
+    let organized = 0;
+    let lastCursor = 0;
+
+    for (const file of files) {
+      const cat = categoryFor(file);
+      let targetFolder = existingFolders.get(cat.toLowerCase());
+      if (!targetFolder) {
+        const created = await createFolderNode({
+          parentId: folder.id,
+          name: cat,
+          ownerId: req.user.id,
+        });
+        targetFolder = created.node;
+        existingFolders.set(cat.toLowerCase(), targetFolder);
+        lastCursor = created.cursor;
+      }
+      const moved = await updateNode({
+        id: file.id,
+        parentId: targetFolder.id,
+        ownerId: req.user.id,
+      });
+      lastCursor = moved.cursor;
+      usedCategories.add(cat);
+      organized++;
+    }
+
+    if (lastCursor) emitSyncChange(req.user.id, lastCursor);
+    res.json({ ok: true, organized, categories: Array.from(usedCategories) });
+  } catch (e) {
+    bad(res, e.status || 500, e.message);
+  }
 });
 
 api.post("/nodes/move", auth, async (req, res) => {
@@ -917,7 +1005,15 @@ api.post("/uploads", auth, async (req, res) => {
 api.put("/uploads/:id/parts/:idx", auth, async (req, res) => {
   const up = await Upload.findOne({ id: req.params.id }).lean();
   if (!up) return bad(res, 404, "upload not found");
-  if (!tg.ready) return bad(res, 503, tg.error || "Telegram storage offline");
+  if (!tg.client) return bad(res, 503, tg.error || "Telegram storage offline");
+
+  let peer;
+  try {
+    peer = await getUserPeer(up.user_id);
+  } catch (peerErr) {
+    return bad(res, 400, peerErr.message || "No Telegram channel connected");
+  }
+
   const idx = Number(req.params.idx);
   const totalParts = Math.max(1, Math.ceil(up.size / up.chunk_size));
   if (!(idx >= 0 && idx < totalParts)) return bad(res, 400, "part index out of range");
@@ -944,9 +1040,6 @@ api.put("/uploads/:id/parts/:idx", auth, async (req, res) => {
         error: { code: "HASH_MISMATCH", message: "Part SHA-256 mismatch", computed: computedPartHash },
       });
     }
-
-    let peer;
-    try { peer = await getUserPeer(up.user_id); } catch(e) {}
 
     const partName =
       totalParts > 1
@@ -1047,7 +1140,7 @@ api.delete("/uploads/:id", auth, async (req, res) => {
 
 async function serveNodeContent(req, res, node) {
   if (!node || node.type !== "file" || node.deleted_at) return bad(res, 404, "file not found");
-  if (!tg.ready) return bad(res, 503, tg.error || "Telegram storage not connected");
+  if (!tg.client) return bad(res, 503, tg.error || "Telegram storage not connected");
 
   let chunks = await Chunk.find({ file_id: node.id }).sort({ idx: 1 }).lean();
   if (chunks.length === 0 && node.blob_id) {
@@ -1143,7 +1236,7 @@ api.get("/folders/:id/download", auth, async (req, res) => {
   const rootFolder = await getNode(req.params.id);
   if (!rootFolder || rootFolder.type !== "folder" || rootFolder.deleted_at)
     return bad(res, 404, "folder not found");
-  if (!tg.ready) return bad(res, 503, tg.error || "Telegram storage not connected");
+  if (!tg.client) return bad(res, 503, tg.error || "Telegram storage not connected");
 
   let peer = tg.channel;
   if (rootFolder.owner_id) {

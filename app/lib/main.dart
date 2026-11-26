@@ -10,6 +10,7 @@ import 'sync/sync_engine.dart';
 import 'widgets/sync_dialog.dart';
 import 'widgets/error_banner.dart';
 import 'widgets/server_config_dialog.dart';
+import 'widgets/upload_key_dialogs.dart';
 
 class ThemeController extends ChangeNotifier {
   static final ThemeController instance = ThemeController._internal();
@@ -352,6 +353,19 @@ class _AuthScreenState extends State<AuthScreen> {
                     ],
                   ),
                 ),
+                const SizedBox(height: 14),
+                TextButton.icon(
+                  onPressed: () => showDropUploadScreen(context),
+                  icon: Icon(Icons.vpn_key_outlined, size: 16, color: moonColor),
+                  label: Text(
+                    'Send Files via Upload Key',
+                    style: GoogleFonts.spaceGrotesk(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: moonColor,
+                    ),
+                  ),
+                ),
               ],
             ),
           ),
@@ -416,7 +430,10 @@ class _LinkStorageScreenState extends State<LinkStorageScreen> {
     try {
       final status = await ApiService().getStatus().catchError((_) => <String, dynamic>{});
       if (status.isNotEmpty) {
-        if (status['telegram'] == 'offline') {
+        final mode = status['mode']?.toString();
+        _serverMode = mode;
+
+        if (mode == null || mode.isEmpty) {
           if (mounted) {
             setState(() {
               _serverOffline = true;
@@ -427,11 +444,10 @@ class _LinkStorageScreenState extends State<LinkStorageScreen> {
           return;
         }
 
-        final mode = status['mode']?.toString();
-        _serverMode = mode;
         if (mode == 'bot') {
           if (mounted) {
             setState(() {
+              _serverOffline = false;
               _loadingDialogs = false;
             });
           }
@@ -715,8 +731,8 @@ class _LinkStorageScreenState extends State<LinkStorageScreen> {
                       controller: _linkController,
                       decoration: InputDecoration(
                         hintText: _serverMode == 'bot'
-                            ? '@channel  ·  -100...  ·  t.me/channel'
-                            : 'https://t.me/+...  ·  @channel  ·  -100...',
+                            ? '@channel  ·  -100...  ·  t.me/c/...'
+                            : 'https://t.me/+...  ·  https://t.me/c/...  ·  @channel',
                         prefixIcon: Icon(Icons.link, color: mutedColor),
                       ),
                       style: GoogleFonts.jetBrainsMono(fontSize: 14),
@@ -849,7 +865,7 @@ class _LinkStorageScreenState extends State<LinkStorageScreen> {
                             const SizedBox(height: 10),
                             _buildBotStep('1', 'Add your TeleMoon bot as an Admin to your Telegram channel.', isDark, moonColor),
                             const SizedBox(height: 8),
-                            _buildBotStep('2', 'Paste the channel @username or ID (e.g. -100...) in the input box above.', isDark, moonColor),
+                            _buildBotStep('2', 'Paste the channel https://t.me/c/... link, @username, or ID (-100...) in the input box above.', isDark, moonColor),
                             const SizedBox(height: 8),
                             _buildBotStep('3', 'Click "Connect Channel".', isDark, moonColor),
                           ],
@@ -1052,6 +1068,7 @@ class _DriveScreenState extends State<DriveScreen> {
   String? _error;
 
   String get _currentFolderId => _folderStack.isEmpty ? 'root' : _folderStack.last['id']!;
+  String get _currentFolderName => _folderStack.isEmpty ? widget.channelName : _folderStack.last['name']!;
 
   // Current relative folder path (e.g. "Documents/Invoices" or "" at root)
   String get _currentRelPath {
@@ -1174,6 +1191,15 @@ class _DriveScreenState extends State<DriveScreen> {
     });
   }
 
+  void _openUploadKeysDialog() {
+    showUploadKeyConfigDialog(
+      context,
+      folderId: _currentFolderId,
+      folderName: _currentFolderName,
+      onDriveChanged: _fetchDrive,
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -1227,6 +1253,11 @@ class _DriveScreenState extends State<DriveScreen> {
             icon: Icon(Icons.refresh, color: mutedColor),
             onPressed: _fetchDrive,
           ),
+          IconButton(
+            tooltip: 'Folder Upload Keys',
+            icon: Icon(Icons.vpn_key_outlined, color: moonColor),
+            onPressed: _openUploadKeysDialog,
+          ),
           if (isCompact)
             IconButton(
               tooltip: 'Sync Settings',
@@ -1271,7 +1302,11 @@ class _DriveScreenState extends State<DriveScreen> {
               ),
             ),
             onSelected: (value) async {
-              if (value == 'storage') {
+              if (value == 'upload_keys') {
+                _openUploadKeysDialog();
+              } else if (value == 'send_with_key') {
+                showDropUploadScreen(context, onUploaded: _fetchDrive);
+              } else if (value == 'storage') {
                 _goToStorageSettings();
               } else if (value == 'server') {
                 await showDialog(context: context, builder: (_) => const ServerConfigDialog());
@@ -1297,6 +1332,26 @@ class _DriveScreenState extends State<DriveScreen> {
                 ),
               ),
               const PopupMenuDivider(height: 1),
+              PopupMenuItem<String>(
+                value: 'upload_keys',
+                child: Row(
+                  children: [
+                    Icon(Icons.vpn_key_outlined, size: 18, color: moonColor),
+                    const SizedBox(width: 10),
+                    const Text('Configure Upload Keys'),
+                  ],
+                ),
+              ),
+              PopupMenuItem<String>(
+                value: 'send_with_key',
+                child: Row(
+                  children: [
+                    Icon(Icons.upload_file, size: 18, color: moonColor),
+                    const SizedBox(width: 10),
+                    const Text('Send Files via Key'),
+                  ],
+                ),
+              ),
               PopupMenuItem<String>(
                 value: 'storage',
                 child: Row(

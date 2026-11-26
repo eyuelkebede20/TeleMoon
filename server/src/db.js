@@ -1031,10 +1031,10 @@ export async function createDropLink({ folderId, ownerId, code, password, title 
     throw new Error("Folder does not belong to you");
   }
 
-  let finalCode = (code || "").trim();
+  let finalCode = (code || "").trim().replace(/^#+/, "");
   if (finalCode) {
-    if (!/^[a-zA-Z0-9_-]{2,32}$/.test(finalCode)) {
-      throw new Error("Code must be 2–32 letters, numbers, hyphens, or underscores");
+    if (!/^[a-zA-Z0-9_-]{1,32}$/.test(finalCode)) {
+      throw new Error("Key must be 1–32 letters, numbers, hyphens, or underscores");
     }
     const existing = await DropLink.findOne({ code: { $regex: new RegExp(`^${escapeRegex(finalCode)}$`, "i") } });
     if (existing) {
@@ -1071,8 +1071,9 @@ export async function getDropLinkById(id) {
 }
 
 export async function getDropLinkByCode(code) {
-  if (!code) return null;
-  const link = await DropLink.findOne({ code: { $regex: new RegExp(`^${escapeRegex(code.trim())}$`, "i") } }).lean();
+  const clean = String(code || "").trim().replace(/^#+/, "");
+  if (!clean) return null;
+  const link = await DropLink.findOne({ code: { $regex: new RegExp(`^${escapeRegex(clean)}$`, "i") } }).lean();
   if (!link) return null;
   return populateDropLink(link);
 }
@@ -1082,24 +1083,29 @@ export async function getDropLinksByFolder(folderId, ownerId) {
   return Promise.all(links.map(populateDropLink));
 }
 
+export async function getDropLinksByOwner(ownerId) {
+  const links = await DropLink.find({ owner_id: ownerId }).sort({ updated_at: -1, created_at: -1 }).lean();
+  return Promise.all(links.map(populateDropLink));
+}
+
 export async function updateDropLink(id, ownerId, { code, password, is_active, title }) {
   const existing = await DropLink.findOne({ id, owner_id: ownerId }).lean();
   if (!existing) throw new Error("Drop link not found");
 
   let newCode = existing.code;
-  if (code && code.trim() !== existing.code) {
-    const c = code.trim();
-    if (!/^[a-zA-Z0-9_-]{2,32}$/.test(c)) {
-      throw new Error("Code must be 2–32 letters, numbers, hyphens, or underscores");
+  const cleanNewCode = code !== undefined ? String(code).trim().replace(/^#+/, "") : "";
+  if (cleanNewCode && cleanNewCode !== existing.code) {
+    if (!/^[a-zA-Z0-9_-]{1,32}$/.test(cleanNewCode)) {
+      throw new Error("Key must be 1–32 letters, numbers, hyphens, or underscores");
     }
     const conflict = await DropLink.findOne({
-      code: { $regex: new RegExp(`^${escapeRegex(c)}$`, "i") },
+      code: { $regex: new RegExp(`^${escapeRegex(cleanNewCode)}$`, "i") },
       id: { $ne: id },
     });
     if (conflict) {
-      throw new Error(`The code or link "${c}" is already in use.`);
+      throw new Error(`The code or link "${cleanNewCode}" is already in use.`);
     }
-    newCode = c;
+    newCode = cleanNewCode;
   }
 
   let newPasswordHash = existing.password_hash;

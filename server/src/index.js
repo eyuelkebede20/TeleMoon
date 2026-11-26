@@ -6,7 +6,7 @@ import { fileURLToPath } from "node:url";
 import { cfg } from "./config.js";
 import { connectDB } from "./db.js";
 import { api } from "./routes.js";
-import { initTelegram } from "./telegram.js";
+import { initTelegram, tg } from "./telegram.js";
 import { startBackgroundJobs } from "./jobs.js";
 import { learnPublicUrl } from "./keepalive.js";
 
@@ -59,6 +59,7 @@ import { learnPublicUrl } from "./keepalive.js";
   startBackgroundJobs();
 
   initTelegram().catch((e) => {
+    tg.error = e.message;
     console.error("[tg] init failed:", e.message);
   });
 })();

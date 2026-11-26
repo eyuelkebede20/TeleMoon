@@ -264,6 +264,7 @@ class SyncEngine {
       // Initial sync via snapshot
       String? after;
       int snapshotCursor = 0;
+      bool hasMore = false;
       do {
         final snap = await _api!.fetchSnapshot(after: after);
         snapshotCursor = snap['snapshotCursor'] as int? ?? 0;
@@ -272,7 +273,16 @@ class SyncEngine {
           final m = node as Map<String, dynamic>;
           await _applyRemoteNode(m);
         }
-        after = snap['nextAfter'] as String?;
+        hasMore = snap['hasMore'] == true && nodes.isNotEmpty;
+        final nextAfter = snap['nextAfter'] as String?;
+        if (nextAfter != null && nextAfter.isNotEmpty) {
+          after = nextAfter;
+        } else if (hasMore) {
+          final last = nodes.last as Map<String, dynamic>;
+          after = (last['nodeId'] ?? last['id']) as String?;
+        } else {
+          after = null;
+        }
       } while (after != null);
 
       await _db.setKv('last_cursor', snapshotCursor.toString());
@@ -321,28 +331,29 @@ class SyncEngine {
   }
 
   Future<void> _applyRemoteNode(Map<String, dynamic> m) async {
-    final nodeId = m['id'] as String;
+    final nodeId = (m['nodeId'] ?? m['id']) as String;
+    final parentId = (m['parentId'] ?? m['parent_id']) as String?;
     var entry = await _db.getEntryByNodeId(nodeId);
     if (entry == null) {
       entry = SyncEntry(
         nodeId: nodeId,
         type: m['type'] as String? ?? 'file',
-        remoteParentId: m['parent_id'] as String?,
+        remoteParentId: parentId,
         remoteName: m['name'] as String?,
         remoteVersion: m['version'] as int? ?? 1,
         remoteHash: m['hash'] as String?,
         remoteSize: m['size'] as int? ?? 0,
-        remoteDeleted: m['deleted_at'] != null,
+        remoteDeleted: m['deleted_at'] != null || m['deletedAt'] != null,
         localRelPath: m['name'] as String?,
         localPresent: false,
       );
     } else {
-      entry.remoteParentId = m['parent_id'] as String?;
+      entry.remoteParentId = parentId;
       entry.remoteName = m['name'] as String?;
       entry.remoteVersion = m['version'] as int? ?? entry.remoteVersion;
       entry.remoteHash = m['hash'] as String?;
       entry.remoteSize = m['size'] as int? ?? 0;
-      entry.remoteDeleted = m['deleted_at'] != null;
+      entry.remoteDeleted = m['deleted_at'] != null || m['deletedAt'] != null;
     }
     entry.excluded = !isTracked(entry.localRelPath ?? entry.remoteName ?? '');
     await _db.saveEntry(entry);
@@ -525,7 +536,7 @@ class SyncEngine {
         break;
 
       case SyncOpKind.conflict:
-        final origRel = op.payload['originalRelPath'] as String;
+        final origRel = (op.payload['origRelPath'] ?? op.payload['originalRelPath']) as String;
         final conflictRel = op.payload['conflictRelPath'] as String;
         final origFile = File(p.join(root, origRel));
         final conflictFile = File(p.join(root, conflictRel));

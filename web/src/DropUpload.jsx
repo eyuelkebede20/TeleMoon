@@ -34,6 +34,12 @@ export default function DropUpload({ code, onExit }) {
   useEffect(() => {
     setLoading(true);
     setError("");
+    setInfo(null);
+    setTicket(null);
+    setPassword("");
+    setPasswordError("");
+    setUploads([]);
+    setCompleted([]);
     api.getDropInfo(code)
       .then((data) => {
         setInfo(data);
@@ -171,7 +177,7 @@ export default function DropUpload({ code, onExit }) {
           <div className="card" style={{ marginBottom: 24, padding: "24px 28px" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 8 }}>
               <span className="badge-tracked" style={{ fontSize: "0.75rem", padding: "2px 8px" }}>
-                FILE DROP · CODE #{info.code}
+                UPLOAD KEY · #{info.code}
               </span>
             </div>
             <h1 style={{ margin: "4px 0 8px", fontSize: "1.6rem", fontWeight: 700, letterSpacing: "-0.02em" }}>
@@ -180,6 +186,11 @@ export default function DropUpload({ code, onExit }) {
             <p className="dim" style={{ margin: 0, fontSize: "0.95rem", display: "flex", alignItems: "center", gap: 6 }}>
               <FolderIcon style={{ width: 16, height: 16 }} /> Destination folder: <b>{info.folderName}</b>
             </p>
+            {info.storageReady === false && (
+              <p style={{ margin: "12px 0 0", fontSize: "0.86rem", color: "var(--danger)" }}>
+                Notice: @{info.ownerHandle} has not finished connecting Telegram storage for this key yet, so uploads may fail until they link a group.
+              </p>
+            )}
           </div>
 
           {/* Password Protection Gate */}

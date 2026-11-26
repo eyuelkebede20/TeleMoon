@@ -188,9 +188,9 @@ export async function initTelegram() {
   // (bot-mode setup aid); once linked it indexes foreign document posts.
   client.addEventHandler(onChannelPost, new NewMessage({}));
 
-  // Channel: DB setting (linked from the UI) wins; TG_CHANNEL_ID is a seed; fallback to any linked user's channel.
-  const firstUser = await User.findOne({ channel_id: { $nin: [null, ""] } }, { channel_id: 1 }).lean().catch(() => null);
-  const candidates = [await getSetting("channel"), cfg.channel, firstUser?.channel_id].filter(Boolean);
+  // Channel: DB setting (linked from the UI) wins; TG_CHANNEL_ID is a seed; fallback to linked users' channels.
+  const userChannelIds = await User.distinct("channel_id", { channel_id: { $nin: [null, ""] } }).catch(() => []);
+  const candidates = [await getSetting("channel"), cfg.channel, ...userChannelIds].filter(Boolean);
   const saved = candidates[0];
   if (!saved) {
     tg.error = "no storage linked yet — paste a channel link in the app";
@@ -646,14 +646,25 @@ async function onChannelPost(ev) {
   }
 }
 
+function assertClient() {
+  if (!tg.client) throw err(tg.error || "Telegram offline", 503);
+}
+
 function assertReady() {
-  if (!tg.ready) throw err(tg.error || "Telegram storage not connected", 503);
+  assertClient();
+  if (!tg.ready || !tg.channel) throw err(tg.error || "Telegram storage not connected", 503);
 }
 
 /** Upload a file from disk into the channel. Returns the message id. */
-export async function sendDocument(filePath, fileName, caption, peer = tg.channel) {
-  assertReady();
-  const target = peer ? await resolvePeer(peer) : tg.channel;
+export async function sendDocument(filePath, fileName, caption, peer = null) {
+  let target;
+  if (peer) {
+    assertClient();
+    target = await resolvePeer(peer);
+  } else {
+    assertReady();
+    target = tg.channel;
+  }
   const msg = await tg.client.sendFile(target, {
     file: filePath,
     caption,
@@ -663,17 +674,29 @@ export async function sendDocument(filePath, fileName, caption, peer = tg.channe
   return msg.id;
 }
 
-export async function getMessage(msgId, peer = tg.channel) {
-  assertReady();
-  const target = peer ? await resolvePeer(peer) : tg.channel;
+export async function getMessage(msgId, peer = null) {
+  let target;
+  if (peer) {
+    assertClient();
+    target = await resolvePeer(peer);
+  } else {
+    assertReady();
+    target = tg.channel;
+  }
   const [m] = await tg.client.getMessages(target, { ids: [msgId] });
   if (!m || !m.media) throw err(`message ${msgId} missing in channel (deleted?)`, 502);
   return m;
 }
 
-export async function deleteMessages(ids, peer = tg.channel) {
-  if (!tg.ready || !ids.length) return;
-  const target = peer ? await resolvePeer(peer) : tg.channel;
+export async function deleteMessages(ids, peer = null) {
+  if (!tg.client || !ids.length) return;
+  let target;
+  if (peer) {
+    target = await resolvePeer(peer);
+  } else {
+    if (!tg.ready || !tg.channel) return;
+    target = tg.channel;
+  }
   for (let i = 0; i < ids.length; i += 100) {
     try {
       await tg.client.deleteMessages(target, ids.slice(i, i + 100), {

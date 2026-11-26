@@ -3,8 +3,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:app/main.dart';
+import 'package:app/api_service.dart';
 import 'package:app/widgets/error_banner.dart';
 import 'package:app/widgets/server_config_dialog.dart';
+import 'package:app/widgets/upload_key_dialogs.dart';
 
 void main() {
   setUpAll(() {
@@ -153,6 +155,45 @@ void main() {
       expect(find.text('Connect Channel'), findsOneWidget);
       expect(find.text('Telegram Channels & Groups'), findsOneWidget);
       expect(find.byIcon(Icons.refresh), findsOneWidget);
+    });
+  });
+
+  group('Upload Key Tests', () {
+    test('ApiService.cleanDropCode normalizes PINs, #hashes, and drop URLs', () {
+      expect(ApiService.cleanDropCode('4829'), '4829');
+      expect(ApiService.cleanDropCode(' #qq '), 'qq');
+      expect(ApiService.cleanDropCode('https://telemoon.ethiodeploy.com/#/d/4829?src=qr'), '4829');
+      expect(ApiService.cleanDropCode('https://example.com/drop/work_docs/'), 'work_docs');
+    });
+
+    testWidgets('AuthScreen provides Send Files via Upload Key action without breaking login fields',
+        (WidgetTester tester) async {
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData.light(),
+          home: const AuthScreen(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Send Files via Upload Key'), findsOneWidget);
+      await tester.tap(find.text('Send Files via Upload Key'));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Quick Upload with a Small Key'), findsOneWidget);
+      expect(find.text('Open'), findsOneWidget);
+    });
+
+    testWidgets('DropUploadScreen renders upload key field directly', (WidgetTester tester) async {
+      await tester.pumpWidget(
+        const MaterialApp(
+          home: DropUploadScreen(),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('Send via Upload Key'), findsOneWidget);
+      expect(find.byType(TextField), findsOneWidget);
     });
   });
 }

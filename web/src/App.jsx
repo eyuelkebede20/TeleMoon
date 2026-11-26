@@ -41,7 +41,11 @@ export default function App() {
 
   const openDrop = (code) => {
     if (!code) return;
-    const clean = code.trim().replace(/^https?:\/\/[^/]+/i, "").replace(/^\/?(?:d|drop|u)\//i, "");
+    let clean = String(code).trim();
+    clean = clean.replace(/^https?:\/\/[^/]+/i, "");
+    clean = clean.replace(/^\/?#+\/?/, "");
+    clean = clean.replace(/^\/?(?:d|drop|u)\//i, "");
+    clean = clean.split(/[?#]/)[0].replace(/\/+$/, "").replace(/^#+/, "").trim();
     if (!clean) return;
     window.history.pushState(null, "", `/d/${encodeURIComponent(clean)}`);
     setDropCode(clean);

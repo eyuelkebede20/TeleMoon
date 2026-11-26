@@ -81,7 +81,7 @@ export async function triggerPing() {
     const res = await fetch(urlToPing, {
       method: "GET",
       headers: {
-        "User-Agent": "TeleMoon-KeepAlive/1.0 (+https://github.com/eyuelkebede20/TeleMoon)",
+        Accept: "application/json",
         "X-Keep-Alive": "1",
       },
       signal: AbortSignal.timeout(15000),

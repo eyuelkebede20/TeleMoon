@@ -678,7 +678,7 @@ export default function Drive({ user, onLogout, onStorage, onOpenDrop }) {
       )}
 
       {modal && modal.type === "folder-share" ? (
-        <FolderShareModal folder={modal.node} onClose={() => setModal(null)} />
+        <FolderShareModal folder={modal.node} onOpenDrop={onOpenDrop} onClose={() => setModal(null)} />
       ) : modal && modal.type === "share" ? (
         <ShareModal modal={modal} onClose={() => setModal(null)} />
       ) : modal && modal.type === "move" ? (

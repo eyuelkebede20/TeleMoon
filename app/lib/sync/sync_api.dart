@@ -110,7 +110,7 @@ class SyncApiClient {
     final clientModifiedAt = (await file.lastModified()).millisecondsSinceEpoch;
 
     // Step 1: Prepare upload
-    final prepUri = Uri.parse('$baseUrl/uploads/prepare');
+    final prepUri = Uri.parse('$baseUrl/uploads');
     final prepRes = await http.post(
       prepUri,
       headers: _headers,
@@ -136,7 +136,7 @@ class SyncApiClient {
       return prepData['node'] as Map<String, dynamic>;
     }
 
-    final uploadId = prepData['uploadId'] as String;
+    final uploadId = (prepData['id'] ?? prepData['uploadId']) as String;
     final chunkSize = prepData['chunkSize'] as int;
 
     // Step 2: Upload parts

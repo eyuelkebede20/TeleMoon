@@ -243,7 +243,7 @@ export default function Auth({ onAuth, onOpenDrop }) {
                   type="text"
                   value={dropInput}
                   onChange={(e) => setDropInput(e.target.value)}
-                  placeholder="Code or link (e.g. 4829 or qq)"
+                  placeholder="Small key (e.g. 4829, #qq) or link"
                   style={{
                     flex: 1,
                     padding: "8px 12px",
