@@ -106,12 +106,13 @@ export default function App() {
   if (!user) return <Auth onAuth={setUser} onOpenDrop={openDrop} />;
   if (!status) return <div className="boot"><Crescent /></div>;
 
-  if (status.telegram !== "connected" || !user.channel_id || managing)
+  const serverClientDown = !status.mode && !status.clientConnected && status.telegram !== "connected";
+  if (serverClientDown || !user.channel_id || managing)
     return (
       <Connect
         status={status}
         user={user}
-        canSkip={!!user.channel_id && status.telegram === "connected"}
+        canSkip={!!user.channel_id && (status.telegram === "connected" || !!status.mode || !!status.clientConnected)}
         onDone={() => {
           setManaging(false);
           const u = savedUser.get();

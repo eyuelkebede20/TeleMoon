@@ -637,10 +637,17 @@ export default function Drive({ user, onLogout, onStorage, onOpenDrop }) {
       </main>
 
       <footer className="statusbar">
-        <span className={`dot ${status?.telegram === "connected" ? "ok" : "off"}`} />
-        {status?.telegram === "connected"
-          ? <>Linked to <b>{status.channel}</b> · parts of {fmtBytes(status.chunkBytes)}</>
-          : <>Storage offline{status?.error ? ` — ${status.error}` : ""}</>}
+        {status?.telegram === "connected" || ((status?.mode || status?.clientConnected) && user?.channel_id) ? (
+          <>
+            <span className="dot ok" />
+            Linked to <b>{status?.channel || user?.channel_id}</b> · parts of {fmtBytes(status?.chunkBytes || 0)}
+          </>
+        ) : (
+          <>
+            <span className="dot off" />
+            Storage offline{status?.error ? ` — ${status.error}` : ""}
+          </>
+        )}
         {status?.keepAlive?.enabled && (
           <span
             className="dim mono"

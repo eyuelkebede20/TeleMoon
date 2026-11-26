@@ -81,6 +81,7 @@ api.get("/status", async (_req, res) => {
   const userCount = await User.countDocuments();
   res.json({
     telegram: tg.ready ? "connected" : "offline",
+    clientConnected: Boolean(tg.client),
     mode: tg.mode,
     channel: tg.channel?.title || null,
     error: tg.error,
@@ -96,6 +97,8 @@ api.get("/public-status", async (_req, res) => {
     users: userCount,
     botUsername: tg.botUsername || cfg.botUsername || "Telemoon2bot",
     telegram: tg.ready ? "connected" : "offline",
+    clientConnected: Boolean(tg.client),
+    mode: tg.mode,
     channel: tg.channel?.title || null,
   });
 });

@@ -98,7 +98,7 @@ export default function Auth({ onAuth, onOpenDrop }) {
       <div className="auth-top">
         {pubStatus?.botUsername && (
           <div className="pub-status-badge" title={`Telegram bot @${pubStatus.botUsername}`}>
-            <span className={`dot ${pubStatus.telegram === "connected" ? "ok" : "off"}`} />
+            <span className={`dot ${pubStatus.telegram === "connected" || pubStatus.clientConnected ? "ok" : "off"}`} />
             <span>@{pubStatus.botUsername}</span>
           </div>
         )}

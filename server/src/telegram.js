@@ -500,7 +500,7 @@ export async function resolvePeer(refOrEntity, { requireFullEntity = false } = {
     return dialogEntity;
   }
 
-  // 5. Try getInputEntity as final GramJS lookup, hydrating Channel/Chat peers
+  // 5. Try getInputEntity + direct channels.GetChannels with accessHash=0 fallback
   for (const cand of candidateTargets) {
     try {
       const inputPeer = await tg.client.getInputEntity(cand);
@@ -520,6 +520,24 @@ export async function resolvePeer(refOrEntity, { requireFullEntity = false } = {
     }
   }
 
+  if (parsed.type === "id" && cleanR) {
+    try {
+      const resCh = await tg.client.invoke(
+        new Api.channels.GetChannels({
+          id: [new Api.InputChannel({ channelId: bigInt(cleanR), accessHash: bigInt(0) })],
+        })
+      );
+      const ent = resCh?.chats?.find((c) => c?.id?.toString() === cleanR);
+      if (ent && (ent.className === "Channel" || ent.className === "Chat")) {
+        cacheVerified(tg.client, ent);
+        await persistEntity(ent);
+        return ent;
+      }
+    } catch (e) {
+      if (!lastErr) lastErr = e;
+    }
+  }
+
   // 6. Accurate error reporting (never silently switch to another channel or fabricate peers)
   const msg = lastErr?.errorMessage || lastErr?.message || "";
   if (/USERNAME_NOT_OCCUPIED|USERNAME_INVALID/i.test(msg)) {
@@ -529,6 +547,29 @@ export async function resolvePeer(refOrEntity, { requireFullEntity = false } = {
     throw err("TeleMoon does not have permission to access this Telegram channel/group.", 403);
   }
   if (tg.mode === "bot") {
+    if (cfg.botToken && parsed.type === "id") {
+      try {
+        const botRes = await fetch(
+          `https://api.telegram.org/bot${cfg.botToken}/getChat?chat_id=${encodeURIComponent(targetId)}`,
+          { signal: AbortSignal.timeout(4000) }
+        );
+        const botData = await botRes.json().catch(() => null);
+        if (botData?.ok && botData?.result?.title) {
+          throw err(
+            `Found group "${botData.result.title}", but @${tg.botUsername || "the bot"} needs a fresh message in that group to obtain its MTProto access key. Send any message in "${botData.result.title}" right now and click Connect again.`,
+            400
+          );
+        }
+        if (botData && !botData.ok) {
+          throw err(
+            `@${tg.botUsername || "Your bot"} is not in group ${targetId} (${botData.description || "chat not found"}). Add @${tg.botUsername || "the bot"} as an Administrator first.`,
+            400
+          );
+        }
+      } catch (botProbeErr) {
+        if (botProbeErr?.status === 400) throw botProbeErr;
+      }
+    }
     throw err(
       `TeleMoon could not access group ${targetId}. Make sure @${tg.botUsername || "your bot"} is added to the group as an Administrator, send any message in the group, then try again.`,
       400

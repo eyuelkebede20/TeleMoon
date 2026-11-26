@@ -212,6 +212,41 @@ try {
   const searchSafe = await req("GET", "/search?q=" + encodeURIComponent("doc(1)+[final]"), null, token);
   assert.equal(searchSafe.status, 200, "Search with regex special chars succeeds cleanly");
 
+  // 6. Status endpoints expose clientConnected: true even when global tg.ready === false
+  tg.ready = false;
+  tg.channel = null;
+  tg.mode = "bot";
+  const statusRes = await req("GET", "/status");
+  assert.equal(statusRes.status, 200);
+  assert.equal(statusRes.data.clientConnected, true);
+  assert.equal(statusRes.data.mode, "bot");
+
+  const pubStatusRes = await req("GET", "/public-status");
+  assert.equal(pubStatusRes.status, 200);
+  assert.equal(pubStatusRes.data.clientConnected, true);
+  assert.equal(pubStatusRes.data.mode, "bot");
+
+  // 7. Bot mode direct channels.GetChannels fallback succeeds for unseen group when API returns chat
+  const botChanId = "9998887773";
+  const botEnt = new Api.Channel({
+    id: bigInt(botChanId),
+    title: "Bot GetChannels Fallback Group",
+    accessHash: bigInt("333444555666"),
+    date: 1700000000,
+    megagroup: true,
+    photo: new Api.ChatPhotoEmpty(),
+  });
+  const prevInvoke = tg.client.invoke;
+  tg.client.invoke = async (fn) => {
+    if (fn?.className === "channels.GetChannels") {
+      return { chats: [botEnt] };
+    }
+    return prevInvoke ? prevInvoke(fn) : {};
+  };
+  const botResolved = await resolvePeer(`https://t.me/c/${botChanId}/5`);
+  assert.equal(botResolved.title, "Bot GetChannels Fallback Group");
+  await TgEntity.deleteOne({ id: botChanId }).catch(() => {});
+
   console.log("All Telegram linking, entity hydration, and sync removal tests PASSED successfully!");
 } catch (err) {
   console.error("Test failed:", err);
